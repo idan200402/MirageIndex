@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="458" viewBox="0 0 980 458">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="490.0" y="36" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="700">Model Stats Comparison</text>
+<rect x="190" y="54" width="14" height="14" fill="#2563eb" rx="2"/>
+<text x="212" y="66" font-family="Arial, sans-serif" font-size="13" fill="#222">F1</text>
+<rect x="262" y="54" width="14" height="14" fill="#16a34a" rx="2"/>
+<text x="284" y="66" font-family="Arial, sans-serif" font-size="13" fill="#222">Accuracy</text>
+<line x1="190" y1="90" x2="190" y2="368" stroke="#222" stroke-width="1"/>
+<line x1="190" y1="368" x2="930" y2="368" stroke="#222" stroke-width="1"/>
+<line x1="190.0" y1="90" x2="190.0" y2="368" stroke="#eeeeee" stroke-width="1"/>
+<text x="190.0" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.0</text>
+<line x1="264.0" y1="90" x2="264.0" y2="368" stroke="#eeeeee" stroke-width="1"/>
+<text x="264.0" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.1</text>
+<line x1="338.0" y1="90" x2="338.0" y2="368" stroke="#eeeeee" stroke-width="1"/>
+<text x="338.0" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.2</text>
+<line x1="412.0" y1="90" x2="412.0" y2="368" stroke="#eeeeee" stroke-width="1"/>
+<text x="412.0" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.3</text>
+<line x1="486.0" y1="90" x2="486.0" y2="368" stroke="#eeeeee" stroke-width="1"/>
+<text x="486.0" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.4</text>
+<line x1="560.0" y1="90" x2="560.0" y2="368" stroke="#eeeeee" stroke-width="1"/>
+<text x="560.0" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.5</text>
+<line x1="634.0" y1="90" x2="634.0" y2="368" stroke="#eeeeee" stroke-width="1"/>
+<text x="634.0" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.6</text>
+<line x1="708.0" y1="90" x2="708.0" y2="368" stroke="#eeeeee" stroke-width="1"/>
+<text x="708.0" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.7</text>
+<line x1="782.0" y1="90" x2="782.0" y2="368" stroke="#eeeeee" stroke-width="1"/>
+<text x="782.0" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.8</text>
+<line x1="856.0" y1="90" x2="856.0" y2="368" stroke="#eeeeee" stroke-width="1"/>
+<text x="856.0" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.9</text>
+<line x1="930.0" y1="90" x2="930.0" y2="368" stroke="#eeeeee" stroke-width="1"/>
+<text x="930.0" y="392" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">1.0</text>
+<text x="176" y="141.3" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">majority_voting</text>
+<rect x="190" y="106.4" width="0.0" height="25.9" fill="#2563eb" rx="4"/>
+<text x="198.0" y="124.4" font-family="Arial, sans-serif" font-size="13" fill="#222">0.0000</text>
+<rect x="190" y="140.3" width="589.7" height="25.9" fill="#16a34a" rx="4"/>
+<text x="787.7" y="158.3" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7969</text>
+<text x="176" y="234.0" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">naive_bayes</text>
+<rect x="190" y="199.1" width="229.7" height="25.9" fill="#2563eb" rx="4"/>
+<text x="427.7" y="217.0" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3103</text>
+<rect x="190" y="233.0" width="542.9" height="25.9" fill="#16a34a" rx="4"/>
+<text x="740.9" y="251.0" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7336</text>
+<text x="176" y="326.7" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">tfidf_logistic_regression</text>
+<rect x="190" y="291.7" width="144.9" height="25.9" fill="#2563eb" rx="4"/>
+<text x="342.9" y="309.7" font-family="Arial, sans-serif" font-size="13" fill="#222">0.1957</text>
+<rect x="190" y="325.7" width="584.8" height="25.9" fill="#16a34a" rx="4"/>
+<text x="782.8" y="343.6" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7902</text>
+</svg>

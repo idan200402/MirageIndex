@@ -109,6 +109,7 @@ def export_metrics_json(
     output_dir = artifacts_dir / model_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    metrics.setdefault("trained_parameters", {})
     output_path = output_dir / filename
     output_path.write_text(json.dumps(metrics, indent=2, sort_keys=True), encoding="utf-8")
     return output_path

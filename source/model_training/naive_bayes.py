@@ -1,8 +1,10 @@
 import argparse
 import json
+import math
 import random
+import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +17,83 @@ from source.utils.training_metrics import classification_metrics, maybe_export_m
 
 
 LABEL_FIELD = "hallucination"
-MODEL_NAME = "majority_voting"
+TEXT_FIELDS = ("user_query", "chatgpt_response")
+POSITIVE_LABEL = "yes"
+MODEL_NAME = "naive_bayes"
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "general_data.json"
 DEFAULT_ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 DEFAULT_SEED = 42
 DEFAULT_TEST_SIZE = 0.2
+TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9_']+")
+
+
+class MultinomialNaiveBayes:
+    def __init__(self, alpha: float = 1.0) -> None:
+        if alpha <= 0:
+            raise ValueError("alpha must be greater than 0")
+        self.alpha = alpha
+        self.labels: list[str] = []
+        self.vocabulary: set[str] = set()
+        self.label_counts: Counter[str] = Counter()
+        self.token_counts_by_label: dict[str, Counter[str]] = defaultdict(Counter)
+        self.total_tokens_by_label: Counter[str] = Counter()
+
+    def fit(self, texts: list[str], labels: list[str]) -> None:
+        if len(texts) != len(labels):
+            raise ValueError("texts and labels must have the same length")
+        if not texts:
+            raise ValueError("Cannot train on an empty dataset")
+
+        for text, label in zip(texts, labels):
+            self.label_counts[label] += 1
+            tokens = tokenize(text)
+            self.vocabulary.update(tokens)
+            self.token_counts_by_label[label].update(tokens)
+            self.total_tokens_by_label[label] += len(tokens)
+
+        self.labels = sorted(self.label_counts)
+
+    def predict(self, texts: list[str]) -> list[str]:
+        return [max(self._log_probabilities(text), key=self._log_probabilities(text).get) for text in texts]
+
+    def predict_positive_scores(self, texts: list[str], positive_label: str) -> list[float]:
+        return [self._probabilities(text).get(positive_label, 0.0) for text in texts]
+
+    def _log_probabilities(self, text: str) -> dict[str, float]:
+        total_examples = sum(self.label_counts.values())
+        vocabulary_size = len(self.vocabulary)
+        tokens = tokenize(text)
+        log_probabilities = {}
+
+        for label in self.labels:
+            log_probability = math.log(self.label_counts[label] / total_examples)
+            denominator = self.total_tokens_by_label[label] + self.alpha * vocabulary_size
+
+            for token in tokens:
+                token_count = self.token_counts_by_label[label][token]
+                log_probability += math.log((token_count + self.alpha) / denominator)
+
+            log_probabilities[label] = log_probability
+
+        return log_probabilities
+
+    def _probabilities(self, text: str) -> dict[str, float]:
+        log_probabilities = self._log_probabilities(text)
+        max_log_probability = max(log_probabilities.values())
+        exp_values = {
+            label: math.exp(log_probability - max_log_probability)
+            for label, log_probability in log_probabilities.items()
+        }
+        normalizer = sum(exp_values.values())
+        return {label: value / normalizer for label, value in exp_values.items()}
+
+
+def tokenize(text: str) -> list[str]:
+    return TOKEN_PATTERN.findall(text.lower())
+
+
+def record_to_text(record: dict[str, Any]) -> str:
+    return "\n".join(str(record.get(field, "")) for field in TEXT_FIELDS)
 
 
 def load_records(path: Path) -> list[dict[str, Any]]:
@@ -74,16 +148,6 @@ def split_records(
     return train_records, test_records
 
 
-def choose_majority_label(records: list[dict[str, Any]]) -> str:
-    label_counts = Counter(record.get(LABEL_FIELD) for record in records)
-    label_counts.pop(None, None)
-
-    if not label_counts:
-        raise ValueError(f"No labels found in field {LABEL_FIELD!r}")
-
-    return label_counts.most_common(1)[0][0]
-
-
 def print_label_distribution(title: str, records: list[dict[str, Any]]) -> None:
     label_counts = Counter(record.get(LABEL_FIELD, "<missing>") for record in records)
     print(f"\n{title}")
@@ -94,7 +158,7 @@ def print_label_distribution(title: str, records: list[dict[str, Any]]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate a majority-voting baseline model.")
+    parser = argparse.ArgumentParser(description="Train and evaluate a Naive Bayes text baseline model.")
     parser.add_argument(
         "--data",
         type=Path,
@@ -107,6 +171,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=DEFAULT_TEST_SIZE,
         help="Fraction of examples to use for testing.",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=1.0,
+        help="Laplace smoothing value.",
     )
     parser.add_argument(
         "--export-metrics",
@@ -132,12 +202,18 @@ def main() -> None:
     args = parse_args()
     records = load_records(args.data)
     train_records, test_records = split_records(records, args.test_size, args.seed)
-    prediction = choose_majority_label(train_records)
-    y_true = [record.get(LABEL_FIELD) for record in test_records]
-    y_pred = [prediction] * len(test_records)
-    positive_score = 1.0 if prediction == "yes" else 0.0
-    y_score = [positive_score] * len(test_records)
-    metrics = classification_metrics(y_true=y_true, y_pred=y_pred, y_score=y_score)
+
+    train_texts = [record_to_text(record) for record in train_records]
+    train_labels = [record[LABEL_FIELD] for record in train_records]
+    test_texts = [record_to_text(record) for record in test_records]
+    y_true = [record[LABEL_FIELD] for record in test_records]
+
+    model = MultinomialNaiveBayes(alpha=args.alpha)
+    model.fit(train_texts, train_labels)
+
+    y_pred = model.predict(test_texts)
+    y_score = model.predict_positive_scores(test_texts, POSITIVE_LABEL)
+    metrics = classification_metrics(y_true=y_true, y_pred=y_pred, y_score=y_score, positive_label=POSITIVE_LABEL)
     correct = sum(actual == predicted for actual, predicted in zip(y_true, y_pred))
 
     metrics_payload = {
@@ -145,12 +221,17 @@ def main() -> None:
         "data_path": str(args.data),
         "seed": args.seed,
         "test_size": args.test_size,
+        "alpha": args.alpha,
         "train_examples": len(train_records),
         "test_examples": len(test_records),
-        "majority_label": prediction,
+        "vocabulary_size": len(model.vocabulary),
+        "text_fields": list(TEXT_FIELDS),
         "trained_parameters": {
-            "majority_label": prediction,
-            "positive_label_score": positive_score,
+            "alpha": args.alpha,
+            "labels": model.labels,
+            "label_counts": dict(model.label_counts),
+            "total_tokens_by_label": dict(model.total_tokens_by_label),
+            "vocabulary_size": len(model.vocabulary),
         },
         "metrics": metrics,
     }
@@ -161,15 +242,16 @@ def main() -> None:
         artifacts_dir=args.artifacts_dir,
     )
 
-    print("Majority Voting Baseline")
-    print("------------------------")
+    print("Naive Bayes Baseline")
+    print("--------------------")
     print(f"data_path: {args.data}")
     print(f"seed: {args.seed}")
     print(f"test_size: {args.test_size}")
+    print(f"alpha: {args.alpha}")
     print(f"export_metrics: {args.export_metrics}")
     print(f"train_examples: {len(train_records)}")
     print(f"test_examples: {len(test_records)}")
-    print(f"majority_label: {prediction}")
+    print(f"vocabulary_size: {len(model.vocabulary)}")
     print(f"accuracy: {metrics['accuracy']:.4f} ({correct}/{len(test_records)})")
     print(f"precision: {metrics['precision']:.4f}")
     print(f"recall: {metrics['recall']:.4f}")
