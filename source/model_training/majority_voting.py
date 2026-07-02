@@ -1,6 +1,4 @@
 import argparse
-import json
-import random
 import sys
 from collections import Counter
 from pathlib import Path
@@ -11,68 +9,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
+# utility function imports 
 from source.utils.training_metrics import classification_metrics, maybe_export_metrics_json, parse_bool
+from source.utils.data import load_records, split_records, print_label_distribution
 
+# utility constant imports
+from source.utils.data import LABEL_FIELD, DEFAULT_DATA_PATH, DEFAULT_ARTIFACTS_DIR, DEFAULT_SEED, DEFAULT_TEST_SIZE
 
-LABEL_FIELD = "hallucination"
+# file specific constants
 MODEL_NAME = "majority_voting"
-DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "general_data.json"
-DEFAULT_ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
-DEFAULT_SEED = 42
-DEFAULT_TEST_SIZE = 0.2
-
-
-def load_records(path: Path) -> list[dict[str, Any]]:
-    text = path.read_text(encoding="utf-8")
-
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        records = []
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            if not line.strip():
-                continue
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"Invalid JSON on line {line_number}: {exc}") from exc
-            if not isinstance(item, dict):
-                raise ValueError(f"Expected an object on line {line_number}, got {type(item).__name__}")
-            records.append(item)
-        return records
-
-    if isinstance(data, list):
-        if not all(isinstance(item, dict) for item in data):
-            raise ValueError("Expected every list item to be a JSON object")
-        return data
-    if isinstance(data, dict):
-        return [data]
-
-    raise ValueError(f"Expected JSON object, JSON list, or JSONL file, got {type(data).__name__}")
-
-
-def split_records(
-    records: list[dict[str, Any]],
-    test_size: float,
-    seed: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    if not 0 < test_size < 1:
-        raise ValueError("test_size must be between 0 and 1")
-    if len(records) < 2:
-        raise ValueError("Need at least 2 records to split the dataset")
-
-    shuffled_records = records[:]
-    random.Random(seed).shuffle(shuffled_records)
-
-    test_count = max(1, round(len(shuffled_records) * test_size))
-    test_records = shuffled_records[:test_count]
-    train_records = shuffled_records[test_count:]
-
-    if not train_records:
-        raise ValueError("Training split is empty. Use a smaller test_size.")
-
-    return train_records, test_records
-
 
 def choose_majority_label(records: list[dict[str, Any]]) -> str:
     label_counts = Counter(record.get(LABEL_FIELD) for record in records)
@@ -82,16 +27,6 @@ def choose_majority_label(records: list[dict[str, Any]]) -> str:
         raise ValueError(f"No labels found in field {LABEL_FIELD!r}")
 
     return label_counts.most_common(1)[0][0]
-
-
-def print_label_distribution(title: str, records: list[dict[str, Any]]) -> None:
-    label_counts = Counter(record.get(LABEL_FIELD, "<missing>") for record in records)
-    print(f"\n{title}")
-    print("-" * len(title))
-    for label, count in label_counts.most_common():
-        percentage = count / len(records) * 100 if records else 0.0
-        print(f"{label}: {count} ({percentage:.2f}%)")
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate a majority-voting baseline model.")
