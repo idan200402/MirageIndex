@@ -84,6 +84,7 @@ class MultinomialNaiveBayes:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train and evaluate a Naive Bayes text baseline model.")
+    # parsers relating to general model interactions
     parser.add_argument(
         "--data",
         type=Path,
@@ -97,12 +98,14 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_TEST_SIZE,
         help="Fraction of examples to use for testing.",
     )
+    # parsers relating specifically to naive bayes parameters
     parser.add_argument(
         "--alpha",
         type=float,
         default=1.0,
         help="Laplace smoothing value.",
     )
+    # parsers relating to artifact exports and test matrices
     parser.add_argument(
         "--export-metrics",
         type=parse_bool,

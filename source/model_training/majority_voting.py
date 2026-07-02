@@ -30,6 +30,7 @@ def choose_majority_label(records: list[dict[str, Any]]) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate a majority-voting baseline model.")
+    # parsers relating to general model interactions
     parser.add_argument(
         "--data",
         type=Path,
@@ -43,6 +44,7 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_TEST_SIZE,
         help="Fraction of examples to use for testing.",
     )
+    # parsers relating to artifact exports and test matrices
     parser.add_argument(
         "--export-metrics",
         type=parse_bool,

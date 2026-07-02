@@ -101,6 +101,7 @@ def top_weighted_terms(vectorizer: TfidfVectorizer, model: LogisticRegression, l
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train and evaluate a TF-IDF logistic regression baseline model.")
+    # parsers relating to general model interactions
     parser.add_argument(
         "--data",
         type=Path,
@@ -114,11 +115,14 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_TEST_SIZE,
         help="Fraction of examples to use for testing.",
     )
+    # parsers relating to tf-idf interactions
     parser.add_argument("--max-features", type=int, default=20000, help="Maximum TF-IDF vocabulary size.")
     parser.add_argument("--min-df", type=int, default=1, help="Minimum document frequency for terms.")
+    # parsers relating specifically to logistic regression parameters
     parser.add_argument("--learning-rate", type=float, default=0.5, help="Logistic regression learning rate.")
     parser.add_argument("--epochs", type=int, default=80, help="Number of training epochs.")
     parser.add_argument("--l2", type=float, default=0.0001, help="L2 regularization strength.")
+    # parsers relating to artifact exports and test matrices
     parser.add_argument(
         "--export-metrics",
         type=parse_bool,
