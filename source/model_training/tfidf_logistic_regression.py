@@ -1,22 +1,20 @@
 import argparse
-import json
 import math
 import random
-import re
 import sys
-from collections import Counter
 from pathlib import Path
-from typing import Any
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
+# utility class imports
+from source.utils.text import TfidfVectorizer
+
 # utility function imports
 from source.utils.training_metrics import classification_metrics, maybe_export_metrics_json, parse_bool
 from source.utils.data import load_records, split_records, print_label_distribution
-from source.utils.text import tokenize, record_to_text
+from source.utils.text import record_to_text
 
 # utility constant imports
 from source.utils.data import LABEL_FIELD, DEFAULT_DATA_PATH, DEFAULT_ARTIFACTS_DIR, DEFAULT_SEED, DEFAULT_TEST_SIZE
@@ -24,71 +22,6 @@ from source.utils.text import TEXT_FIELDS, POSITIVE_LABEL
 
 # file specific constants
 MODEL_NAME = "tfidf_logistic_regression"
-
-
-class TfidfVectorizer:
-    def __init__(self, max_features: int = 20000, min_df: int = 1) -> None:
-        if max_features <= 0:
-            raise ValueError("max_features must be greater than 0")
-        if min_df <= 0:
-            raise ValueError("min_df must be greater than 0")
-        self.max_features = max_features
-        self.min_df = min_df
-        self.vocabulary: dict[str, int] = {}
-        self.idf: list[float] = []
-
-    def fit(self, texts: list[str]) -> None:
-        document_frequency: Counter[str] = Counter()
-        term_frequency: Counter[str] = Counter()
-
-        for text in texts:
-            tokens = tokenize(text)
-            term_frequency.update(tokens)
-            document_frequency.update(set(tokens))
-
-        terms = [
-            term
-            for term, frequency in term_frequency.most_common()
-            if document_frequency[term] >= self.min_df
-        ][: self.max_features]
-
-        self.vocabulary = {term: index for index, term in enumerate(terms)}
-        document_count = len(texts)
-        self.idf = [
-            math.log((1 + document_count) / (1 + document_frequency[term])) + 1
-            for term in terms
-        ]
-
-    def transform(self, texts: list[str]) -> list[dict[int, float]]:
-        if not self.vocabulary:
-            raise ValueError("Vectorizer must be fitted before transform")
-
-        vectors = []
-        for text in texts:
-            counts: Counter[int] = Counter()
-            for token in tokenize(text):
-                index = self.vocabulary.get(token)
-                if index is not None:
-                    counts[index] += 1
-
-            total_terms = sum(counts.values())
-            vector = {}
-            if total_terms:
-                for index, count in counts.items():
-                    vector[index] = (count / total_terms) * self.idf[index]
-
-                norm = math.sqrt(sum(value * value for value in vector.values()))
-                if norm:
-                    vector = {index: value / norm for index, value in vector.items()}
-
-            vectors.append(vector)
-
-        return vectors
-
-    def fit_transform(self, texts: list[str]) -> list[dict[int, float]]:
-        self.fit(texts)
-        return self.transform(texts)
-
 
 class LogisticRegression:
     def __init__(self, learning_rate: float = 0.5, epochs: int = 80, l2: float = 0.0001, seed: int = 42) -> None:
@@ -148,10 +81,6 @@ def sigmoid(value: float) -> float:
         return 1 / (1 + math.exp(-value))
     exp_value = math.exp(value)
     return exp_value / (1 + exp_value)
-
-
-
-
 
 def top_weighted_terms(vectorizer: TfidfVectorizer, model: LogisticRegression, limit: int = 10) -> dict[str, list[dict[str, float]]]:
     index_to_term = {index: term for term, index in vectorizer.vocabulary.items()}
