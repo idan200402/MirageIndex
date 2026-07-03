@@ -28,6 +28,67 @@ from source.utils.text import TEXT_FIELDS, POSITIVE_LABEL
 # file specific constants
 MODEL_NAME = "tfidf_random_forest"
 
+class DecisionTree:
+    def __init__(self, max_depth: int, min_samples_split: int, max_features_split: int, seed: int):
+        if(max_depth <= 0):
+            raise ValueError("max_depth must be greater than 0")
+        if(min_samples_split < 2):
+            raise ValueError("min_samples_split must be at least 2")
+        if(max_features_split <= 0):
+            raise ValueError("max_features_split must be greater than 0")
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.max_features_split = max_features_split
+
+        # creating the root of the tree
+        self.root: DecisionTree._Node|None = None
+
+    def fit(self, vectors: list[dict[int, float]], labels: list[int], feature_count: int) -> None:
+        if len(vectors) != len(labels):
+            raise ValueError("vectors and labels must have the same length")
+        if not vectors:
+            raise ValueError("Cannot train on an empty dataset")
+        if feature_count <= 0:
+            raise ValueError("feature_count must be greater than 0")
+        
+        self.feature_count = feature_count
+
+        self._rng = random.Random(self.seed)
+        # the list of indices of the samples the tree will be grown based on
+        indices = list(range(len(vectors)))
+        # create a tree root
+        self.root = self._grow_tree(indices, vectors, labels, depth=0)
+        
+
+    def _grow_tree(self, indices:list[int], vectors: list[dict[int, float]], labels: list[int], depth:int)-> DecisionTree._Node:
+        n = len(vectors)
+        # the fraction of samples with a positive label
+        p = labels.count(1)/n
+
+        # stopping conditions for the recursion
+        if (depth >= self.max_depth or n < self.min_samples_split):
+            return DecisionTree._Node(value=p)
+        if (p == 0.0 or p == 1.0):
+            return DecisionTree._Node(value=p)
+        if self._best_split(indices, vectors, labels, "[NEED TO PLACE THE FEATURE SUBSET]") is None:
+            return DecisionTree._Node(value=p)
+        
+        # drawing a random subset of features
+        subset_size = min(self.max_features_split, self.feature_count)
+        feature_subset = self._rng.sample(range(self.feature_count), k=subset_size)
+
+
+    class _Node:
+        def __init__(self, feature_index=None, threshold=None, left=None, right=None, value: float=None):
+            # internal node has values for feature_index, threshold, left and right
+            # lead node has a value (probability)
+            # node is a leaf iff value is not None
+            self.feature_index = feature_index
+            self.threshold = threshold
+            self.left = left
+            self.right = right
+            self.value = value
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train and evaluate a TF-IDF random forest baseline model.")
     # parsers relating to general model interactions
