@@ -43,6 +43,8 @@ class LogisticRegression:
             raise ValueError("vectors and labels must have the same length")
         if not vectors:
             raise ValueError("Cannot train on an empty dataset")
+        if feature_count <= 0:
+            raise ValueError("feature_count must be greater than 0")
 
         self.weights = [0.0] * feature_count
         self.bias = 0.0
