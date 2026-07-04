@@ -1,4 +1,5 @@
 import argparse
+import math
 import random
 import sys
 from pathlib import Path
@@ -15,34 +16,40 @@ from source.utils.text import TfidfVectorizer
 from source.utils.training_metrics import classification_metrics, maybe_export_metrics_json
 from source.utils.data import load_records, split_records, print_label_distribution
 from source.utils.text import record_to_text
-from source.utils.general import add_common_parsing
+from source.utils.general import add_common_parsing, sigmoid
 
 # utility constant imports
 from source.utils.data import LABEL_FIELD
 from source.utils.text import TEXT_FIELDS, POSITIVE_LABEL
 
 # file specific constants
-MODEL_NAME = "tfidf_random_forest"
+MODEL_NAME = "tfidf_xgboost"
 
-class DecisionTree:
-    def __init__(self, max_depth: int, min_samples_split: int, max_features_split: int, seed: int):
+class RegressionTree:
+    def __init__(self, max_depth: int, min_samples_split: int, max_features_split: int, reg_lambda: float, gamma: float, seed: int):
         if(max_depth <= 0):
             raise ValueError("max_depth must be greater than 0")
         if(min_samples_split < 2):
             raise ValueError("min_samples_split must be at least 2")
         if(max_features_split <= 0):
             raise ValueError("max_features_split must be greater than 0")
+        if(reg_lambda < 0):
+            raise ValueError("reg_lambda must be greater than or equal to 0")
+        if(gamma < 0):
+            raise ValueError("gamma must be greater than or equal to 0")
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.max_features_split = max_features_split
+        self.reg_lambda = reg_lambda
+        self.gamma = gamma
         self.seed = seed
 
         # creating the root of the tree
-        self.root: "DecisionTree._Node | None" = None
+        self.root: "RegressionTree._Node | None" = None
 
-    def fit(self, vectors: list[dict[int, float]], labels: list[int], feature_count: int) -> None:
-        if len(vectors) != len(labels):
-            raise ValueError("vectors and labels must have the same length")
+    def fit(self, vectors: list[dict[int, float]], gradients: list[float], hessians: list[float], feature_count: int) -> None:
+        if not (len(vectors) == len(gradients) == len(hessians)):
+            raise ValueError("vectors, gradients and hessians must have the same length")
         if not vectors:
             raise ValueError("Cannot train on an empty dataset")
         if feature_count <= 0:
@@ -54,38 +61,36 @@ class DecisionTree:
         # the list of indices of the samples the tree will be grown based on
         indices = list(range(len(vectors)))
         # create a tree root
-        self.root = self._grow_tree(indices, vectors, labels, depth=0)
+        self.root = self._grow_tree(indices, vectors, gradients, hessians, depth=0)
 
-    def predict_positive_scores(self, vectors: list[dict[int, float]]) -> list[float]:
+    def predict_margins(self, vectors: list[dict[int, float]]) -> list[float]:
         return [self._traverse_tree(vector, self.root) for vector in vectors]
 
-    def _grow_tree(self, indices: list[int], vectors: list[dict[int, float]], labels: list[int], depth: int) -> "DecisionTree._Node":
-        n = len(indices)
-        # the fraction of samples at this node with a positive label
-        p = sum(labels[index] for index in indices) / n
+    def _grow_tree(self, indices: list[int], vectors: list[dict[int, float]], gradients: list[float], hessians: list[float], depth: int) -> "RegressionTree._Node":
+        # gradient and hessian totals drive both the leaf weight and the gain
+        G = sum(gradients[index] for index in indices)
+        H = sum(hessians[index] for index in indices)
+        # the optimal leaf weight for this node under the regularized objective
+        leaf_weight = -G / (H + self.reg_lambda)
 
         # stopping conditions for the recursion
-        if (depth >= self.max_depth or n < self.min_samples_split):
-            return DecisionTree._Node(value=p)
-        if (p == 0.0 or p == 1.0):
-            return DecisionTree._Node(value=p)
+        if (depth >= self.max_depth or len(indices) < self.min_samples_split):
+            return RegressionTree._Node(value=leaf_weight)
 
         # drawing a random subset of features
         subset_size = min(self.max_features_split, self.feature_count)
         feature_subset = self._rng.sample(range(self.feature_count), k=subset_size)
-        split = self._best_split(indices, vectors, labels, feature_subset)
-        # no split improved impurity, so make this a leaf
+        split = self._best_split(indices, vectors, gradients, hessians, feature_subset, G, H)
+        # no split produced a positive gain, so make this a leaf
         if split is None:
-            return DecisionTree._Node(value=p)
+            return RegressionTree._Node(value=leaf_weight)
 
-        feature_index, threshold, left_indices, right_indices = split
-        left = self._grow_tree(left_indices, vectors, labels, depth + 1)
-        right = self._grow_tree(right_indices, vectors, labels, depth + 1)
-        return DecisionTree._Node(feature_index=feature_index, threshold=threshold, left=left, right=right)
+        feature_index, left_indices, right_indices = split
+        left = self._grow_tree(left_indices, vectors, gradients, hessians, depth + 1)
+        right = self._grow_tree(right_indices, vectors, gradients, hessians, depth + 1)
+        return RegressionTree._Node(feature_index=feature_index, threshold=0.0, left=left, right=right)
 
-    def _best_split(self, indices: list[int], vectors: list[dict[int, float]], labels: list[int], feature_subset: list[int]) -> tuple[int, float, list[int], list[int]] | None:
-        parent_gini = self._gini(indices, labels)
-        n = len(indices)
+    def _best_split(self, indices: list[int], vectors: list[dict[int, float]], gradients: list[float], hessians: list[float], feature_subset: list[int], G: float, H: float) -> tuple[int, list[int], list[int]] | None:
         best_gain = 0.0
         best_split = None
 
@@ -93,32 +98,36 @@ class DecisionTree:
             # threshold 0.0 splits term-absent (left) from term-present (right)
             left_indices = []
             right_indices = []
+            # only present rows are summed; the absent side falls out by subtraction
+            G_right = 0.0
+            H_right = 0.0
             for index in indices:
                 if vectors[index].get(feature_index, 0.0) <= 0.0:
                     left_indices.append(index)
                 else:
                     right_indices.append(index)
+                    G_right += gradients[index]
+                    H_right += hessians[index]
 
             # a split that sends everything one way tells us nothing
             if not left_indices or not right_indices:
                 continue
 
-            left_gini = self._gini(left_indices, labels)
-            right_gini = self._gini(right_indices, labels)
-            weighted = (len(left_indices) / n) * left_gini + (len(right_indices) / n) * right_gini
-            gain = parent_gini - weighted
+            G_left = G - G_right
+            H_left = H - H_right
+            gain = 0.5 * (
+                G_left ** 2 / (H_left + self.reg_lambda)
+                + G_right ** 2 / (H_right + self.reg_lambda)
+                - G ** 2 / (H + self.reg_lambda)
+            ) - self.gamma
             if gain > best_gain:
                 best_gain = gain
-                best_split = (feature_index, 0.0, left_indices, right_indices)
+                best_split = (feature_index, left_indices, right_indices)
 
         return best_split
 
-    def _gini(self, indices: list[int], labels: list[int]) -> float:
-        p = sum(labels[index] for index in indices) / len(indices)
-        return 1 - (p ** 2 + (1 - p) ** 2)
-
-    def _traverse_tree(self, vector: dict[int, float], node: "DecisionTree._Node") -> float:
-        # a leaf carries the positive-label probability
+    def _traverse_tree(self, vector: dict[int, float], node: "RegressionTree._Node") -> float:
+        # a leaf carries the additive margin weight
         if node.value is not None:
             return node.value
         if vector.get(node.feature_index, 0.0) <= node.threshold:
@@ -128,7 +137,7 @@ class DecisionTree:
     class _Node:
         def __init__(self, feature_index=None, threshold=None, left=None, right=None, value: float | None = None):
             # internal node has values for feature_index, threshold, left and right
-            # leaf node has a value (probability)
+            # leaf node has a value (margin weight)
             # node is a leaf iff value is not None
             self.feature_index = feature_index
             self.threshold = threshold
@@ -136,8 +145,8 @@ class DecisionTree:
             self.right = right
             self.value = value
 
-class RandomForest:
-    def __init__(self, n_estimators: int, max_depth: int, min_samples_split: int, max_features_split: int, seed: int):
+class XGBoost:
+    def __init__(self, n_estimators: int, max_depth: int, min_samples_split: int, max_features_split: int, learning_rate: float, reg_lambda: float, gamma: float, seed: int):
         if(n_estimators <= 0):
             raise ValueError("n_estimators must be greater than 0")
         if(max_depth <= 0):
@@ -146,12 +155,22 @@ class RandomForest:
             raise ValueError("min_samples_split must be at least 2")
         if(max_features_split <= 0):
             raise ValueError("max_features_split must be greater than 0")
+        if(learning_rate <= 0):
+            raise ValueError("learning_rate must be greater than 0")
+        if(reg_lambda < 0):
+            raise ValueError("reg_lambda must be greater than or equal to 0")
+        if(gamma < 0):
+            raise ValueError("gamma must be greater than or equal to 0")
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.max_features_split = max_features_split
+        self.learning_rate = learning_rate
+        self.reg_lambda = reg_lambda
+        self.gamma = gamma
         self.seed = seed
-        self.trees: list[DecisionTree] = []
+        self.trees: list[RegressionTree] = []
+        self.base_score = 0.0
 
     def fit(self, vectors: list[dict[int, float]], labels: list[int], feature_count: int) -> None:
         if len(vectors) != len(labels):
@@ -163,29 +182,42 @@ class RandomForest:
 
         self.trees = []
         n = len(vectors)
-        for i in range(self.n_estimators):
-            # each tree gets a distinct seed so its bootstrap and feature draws differ
-            rng = random.Random(self.seed + i)
-            # bootstrap sample: n rows drawn with replacement
-            sample = [rng.randrange(n) for _ in range(n)]
-            bootstrap_vectors = [vectors[index] for index in sample]
-            bootstrap_labels = [labels[index] for index in sample]
+        # the base score is the log-odds of the training positive rate, clamped to avoid log(0)
+        positive_rate = sum(labels) / n
+        positive_rate = min(max(positive_rate, 1e-6), 1 - 1e-6)
+        self.base_score = math.log(positive_rate / (1 - positive_rate))
 
-            tree = DecisionTree(
+        # every sample starts at the base margin and accumulates each tree's contribution
+        margins = [self.base_score] * n
+        for m in range(self.n_estimators):
+            # first- and second-order derivatives of the logistic loss at the current margins
+            probabilities = [sigmoid(margin) for margin in margins]
+            gradients = [probability - label for probability, label in zip(probabilities, labels)]
+            hessians = [probability * (1 - probability) for probability in probabilities]
+
+            # each tree gets a distinct seed so its feature draws differ
+            tree = RegressionTree(
                 max_depth=self.max_depth,
                 min_samples_split=self.min_samples_split,
                 max_features_split=self.max_features_split,
-                seed=self.seed + i,
+                reg_lambda=self.reg_lambda,
+                gamma=self.gamma,
+                seed=self.seed + m,
             )
-            tree.fit(bootstrap_vectors, bootstrap_labels, feature_count)
+            tree.fit(vectors, gradients, hessians, feature_count)
+
+            # shrink the new tree's leaf weights before folding them into the margins
+            leaf_margins = tree.predict_margins(vectors)
+            for index in range(n):
+                margins[index] += self.learning_rate * leaf_margins[index]
             self.trees.append(tree)
 
     def predict_positive_scores(self, vectors: list[dict[int, float]]) -> list[float]:
-        totals = [0.0] * len(vectors)
+        totals = [self.base_score] * len(vectors)
         for tree in self.trees:
-            for index, score in enumerate(tree.predict_positive_scores(vectors)):
-                totals[index] += score
-        return [total / len(self.trees) for total in totals]
+            for index, margin in enumerate(tree.predict_margins(vectors)):
+                totals[index] += self.learning_rate * margin
+        return [sigmoid(total) for total in totals]
 
     def predict(self, vectors: list[dict[int, float]]) -> list[str]:
         return [
@@ -194,8 +226,8 @@ class RandomForest:
         ]
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train and evaluate a TF-IDF random forest baseline model.")
-    
+    parser = argparse.ArgumentParser(description="Train and evaluate a TF-IDF XGBoost baseline model.")
+
     # parsers that are general to all models
     parser = add_common_parsing(parser)
     # model specific parser
@@ -207,12 +239,14 @@ def parse_args() -> argparse.Namespace:
     # parsers relating to tf-idf interactions
     parser.add_argument("--max-features", type=int, default=500, help="Maximum TF-IDF vocabulary size.")
     parser.add_argument("--min-df", type=int, default=1, help="Minimum document frequency for terms.")
-    # parsers relating specifically to random-forest parameters
-    parser.add_argument("--n-estimators", type=int, default=50, help="Number of trees in the forest.")
-    parser.add_argument("--max-depth", type=int, default=20, help="Maximum depth of each tree.")
+    # parsers relating specifically to xgboost parameters
+    parser.add_argument("--n-estimators", type=int, default=50, help="Number of boosting rounds (trees).")
+    parser.add_argument("--max-depth", type=int, default=3, help="Maximum depth of each tree.")
     parser.add_argument("--min-samples-split", type=int, default=2, help="Minimum samples required to split a node.")
     parser.add_argument("--max-features-split", type=int, default=32, help="Number of features considered at each split.")
-    
+    parser.add_argument("--learning-rate", type=float, default=0.3, help="Shrinkage applied to each tree's contribution.")
+    parser.add_argument("--reg-lambda", type=float, default=1.0, help="L2 regularization on leaf weights.")
+    parser.add_argument("--gamma", type=float, default=0.0, help="Minimum gain required to make a split.")
 
     return parser.parse_args()
 
@@ -230,11 +264,14 @@ def main() -> None:
     train_vectors = vectorizer.fit_transform(train_texts)
     test_vectors = vectorizer.transform(test_texts)
 
-    model = RandomForest(
+    model = XGBoost(
         n_estimators=args.n_estimators,
         max_depth=args.max_depth,
         min_samples_split=args.min_samples_split,
         max_features_split=args.max_features_split,
+        learning_rate=args.learning_rate,
+        reg_lambda=args.reg_lambda,
+        gamma=args.gamma,
         seed=args.seed,
     )
     model.fit(train_vectors, train_labels, feature_count=len(vectorizer.vocabulary))
@@ -253,6 +290,10 @@ def main() -> None:
         "max_depth": args.max_depth,
         "min_samples_split": args.min_samples_split,
         "max_features_split": args.max_features_split,
+        "learning_rate": args.learning_rate,
+        "reg_lambda": args.reg_lambda,
+        "gamma": args.gamma,
+        "base_score": model.base_score,
         "vocabulary_size": len(vectorizer.vocabulary),
         "tree_count": len(model.trees),
     }
@@ -273,8 +314,8 @@ def main() -> None:
         artifacts_dir=args.artifacts_dir,
     )
 
-    print("TF-IDF Random Forest Baseline")
-    print("-----------------------------")
+    print("TF-IDF XGBoost Baseline")
+    print("-----------------------")
     print(f"data_path: {args.data}")
     print(f"seed: {args.seed}")
     print(f"test_size: {args.test_size}")
@@ -284,6 +325,9 @@ def main() -> None:
     print(f"max_depth: {args.max_depth}")
     print(f"min_samples_split: {args.min_samples_split}")
     print(f"max_features_split: {args.max_features_split}")
+    print(f"learning_rate: {args.learning_rate}")
+    print(f"reg_lambda: {args.reg_lambda}")
+    print(f"gamma: {args.gamma}")
     print(f"export_metrics: {args.export_metrics}")
     print(f"train_examples: {len(train_records)}")
     print(f"test_examples: {len(test_records)}")

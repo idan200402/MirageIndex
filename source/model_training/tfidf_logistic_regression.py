@@ -12,12 +12,13 @@ if str(PROJECT_ROOT) not in sys.path:
 from source.utils.text import TfidfVectorizer
 
 # utility function imports
-from source.utils.training_metrics import classification_metrics, maybe_export_metrics_json, parse_bool
+from source.utils.training_metrics import classification_metrics, maybe_export_metrics_json
 from source.utils.data import load_records, split_records, print_label_distribution
 from source.utils.text import record_to_text
+from source.utils.general import add_common_parsing, sigmoid
 
 # utility constant imports
-from source.utils.data import LABEL_FIELD, DEFAULT_DATA_PATH, DEFAULT_ARTIFACTS_DIR, DEFAULT_SEED, DEFAULT_TEST_SIZE
+from source.utils.data import LABEL_FIELD
 from source.utils.text import TEXT_FIELDS, POSITIVE_LABEL
 
 # file specific constants
@@ -78,11 +79,6 @@ class LogisticRegression:
         return self.bias + sum(self.weights[index] * value for index, value in vector.items())
 
 
-def sigmoid(value: float) -> float:
-    if value >= 0:
-        return 1 / (1 + math.exp(-value))
-    exp_value = math.exp(value)
-    return exp_value / (1 + exp_value)
 
 def top_weighted_terms(vectorizer: TfidfVectorizer, model: LogisticRegression, limit: int = 10) -> dict[str, list[dict[str, float]]]:
     index_to_term = {index: term for term, index in vectorizer.vocabulary.items()}
@@ -103,19 +99,14 @@ def top_weighted_terms(vectorizer: TfidfVectorizer, model: LogisticRegression, l
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train and evaluate a TF-IDF logistic regression baseline model.")
-    # parsers relating to general model interactions
+
+    # parsers that are general to all models
+    parser = add_common_parsing(parser)
+    # model specific parser
     parser.add_argument(
-        "--data",
-        type=Path,
-        default=DEFAULT_DATA_PATH,
-        help=f"Path to the dataset. Defaults to {DEFAULT_DATA_PATH}",
-    )
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Seed used to split the data.")
-    parser.add_argument(
-        "--test-size",
-        type=float,
-        default=DEFAULT_TEST_SIZE,
-        help="Fraction of examples to use for testing.",
+        "--model-name",
+        default=MODEL_NAME,
+        help=f"Model name used for artifact export. Defaults to {MODEL_NAME}.",
     )
     # parsers relating to tf-idf interactions
     parser.add_argument("--max-features", type=int, default=20000, help="Maximum TF-IDF vocabulary size.")
@@ -124,26 +115,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=0.5, help="Logistic regression learning rate.")
     parser.add_argument("--epochs", type=int, default=80, help="Number of training epochs.")
     parser.add_argument("--l2", type=float, default=0.0001, help="L2 regularization strength.")
-    # parsers relating to artifact exports and test matrices
-    parser.add_argument(
-        "--export-metrics",
-        type=parse_bool,
-        default=False,
-        help="True exports test metrics JSON to artifacts/model_name. False skips export.",
-    )
-    parser.add_argument(
-        "--model-name",
-        default=MODEL_NAME,
-        help=f"Model name used for artifact export. Defaults to {MODEL_NAME}.",
-    )
-    parser.add_argument(
-        "--artifacts-dir",
-        type=Path,
-        default=DEFAULT_ARTIFACTS_DIR,
-        help=f"Directory where exported metrics are written. Defaults to {DEFAULT_ARTIFACTS_DIR}.",
-    )
+   
     return parser.parse_args()
-
 
 def main() -> None:
     args = parse_args()

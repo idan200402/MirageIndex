@@ -28,5 +28,6 @@ python source\model_training\majority_voting.py --export-metrics True
 python source\model_training\naive_bayes.py --export-metrics True
 python source\model_training\tfidf_logistic_regression.py --export-metrics True
 python source\model_training\tfidf_random_forest.py --export-metrics True
+python source\model_training\tfidf_xgboost.py --export-metrics True
 python source\utils\plot_stats.py
 ```
