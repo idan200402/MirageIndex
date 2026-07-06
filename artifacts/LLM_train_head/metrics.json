@@ -1,0 +1,69 @@
+{
+  "artifacts": {
+    "best_head_weights": "C:\\Users\\USER\\PycharmProjects\\MirageIndex\\artifacts\\LLM_train_head\\best_head.pt"
+  },
+  "base_model": "Qwen/Qwen3-0.6B",
+  "best_val_loss": 0.399726729783205,
+  "data_path": "C:\\Users\\USER\\PycharmProjects\\MirageIndex\\data\\general_data.json",
+  "metrics": {
+    "accuracy": 0.779134295227525,
+    "pr_auc": 0.3614332153101676,
+    "precision": 0.4230769230769231,
+    "recall": 0.24043715846994534,
+    "roc_auc": 0.6691249219903497
+  },
+  "model_name": "LLM_train_head",
+  "seed": 42,
+  "test_examples": 901,
+  "test_loss": 0.5382403029453476,
+  "test_size": 0.2,
+  "train_examples": 2885,
+  "trained_parameters": {
+    "backbone_parameters_trainable": 0,
+    "batch_size": 4,
+    "device": "cuda",
+    "epochs": 5,
+    "frozen_backbone": "Qwen/Qwen3-0.6B",
+    "head_parameters": 1025,
+    "hidden_size": 1024,
+    "learning_rate": 0.001,
+    "max_length": 512,
+    "positive_label": "yes",
+    "text_fields": [
+      "user_query",
+      "chatgpt_response"
+    ],
+    "torch_dtype": "torch.float16",
+    "trainable_head": "torch.nn.Linear(hidden_size, 1)",
+    "weight_decay": 0.0
+  },
+  "training_history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.47799798372093477,
+      "val_loss": 0.4660092391352713
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.43512890235596763,
+      "val_loss": 0.4309758532394483
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.41341447465547865,
+      "val_loss": 0.399726729783205
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.3954161741601326,
+      "val_loss": 0.40746165309798865
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.38520721603101005,
+      "val_loss": 0.41477460995957194
+    }
+  ],
+  "val_examples": 721,
+  "val_size": 0.2
+}

@@ -1,0 +1,37 @@
+{
+  "alpha": 1.0,
+  "data_path": "C:\\Users\\USER\\PycharmProjects\\MirageIndex\\data\\general_data.json",
+  "metrics": {
+    "accuracy": 0.7336293007769146,
+    "pr_auc": 0.2937205006420726,
+    "precision": 0.32727272727272727,
+    "recall": 0.29508196721311475,
+    "roc_auc": 0.6281413154329726
+  },
+  "model_name": "naive_bayes",
+  "seed": 42,
+  "test_examples": 901,
+  "test_size": 0.2,
+  "text_fields": [
+    "user_query",
+    "chatgpt_response"
+  ],
+  "train_examples": 3606,
+  "trained_parameters": {
+    "alpha": 1.0,
+    "label_counts": {
+      "no": 2974,
+      "yes": 632
+    },
+    "labels": [
+      "no",
+      "yes"
+    ],
+    "total_tokens_by_label": {
+      "no": 284649,
+      "yes": 59615
+    },
+    "vocabulary_size": 19972
+  },
+  "vocabulary_size": 19972
+}

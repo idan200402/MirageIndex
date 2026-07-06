@@ -1,0 +1,30 @@
+{
+  "data_path": "C:\\Users\\USER\\PycharmProjects\\MirageIndex\\data\\general_data.json",
+  "metrics": {
+    "accuracy": 0.8035516093229744,
+    "pr_auc": 0.3400046434920488,
+    "precision": 0.6666666666666666,
+    "recall": 0.06557377049180328,
+    "roc_auc": 0.6415589752956756
+  },
+  "model_name": "tfidf_random_forest",
+  "seed": 42,
+  "test_examples": 901,
+  "test_size": 0.2,
+  "train_examples": 3606,
+  "trained_parameters": {
+    "max_depth": 20,
+    "max_features": 500,
+    "max_features_split": 32,
+    "min_df": 1,
+    "min_samples_split": 2,
+    "n_estimators": 50,
+    "positive_label": "yes",
+    "text_fields": [
+      "user_query",
+      "chatgpt_response"
+    ],
+    "tree_count": 50,
+    "vocabulary_size": 500
+  }
+}
