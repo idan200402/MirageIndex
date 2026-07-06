@@ -40,6 +40,14 @@ class LogisticRegression:
         self.bias = 0.0
 
     def fit(self, vectors: list[dict[int, float]], labels: list[int], feature_count: int) -> None:
+        """Train the weight vector and bias with stochastic gradient descent.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.
+        labels: binary labels (1 = positive, 0 = negative), aligned with vectors.
+        feature_count: size of the vocabulary / feature space.\\
+        Returns nothing.\\
+        The fitted weights and bias are stored on the instance.
+        """
         if len(vectors) != len(labels):
             raise ValueError("vectors and labels must have the same length")
         if not vectors:
@@ -53,41 +61,71 @@ class LogisticRegression:
         rng = random.Random(self.seed)
 
         for _ in range(self.epochs):
+            # reshuffling each epoch decorrelates the update order between passes
             rng.shuffle(indices)
             for index in indices:
                 vector = vectors[index]
                 label = labels[index]
+                # the error is the residual between predicted probability and the label
                 probability = sigmoid(self._decision_function(vector))
                 error = probability - label
 
+                # only the features present in this row have a non-zero gradient
                 for feature_index, value in vector.items():
+                    # the l2 term pulls each weight back toward zero to curb overfitting
                     gradient = error * value + self.l2 * self.weights[feature_index]
                     self.weights[feature_index] -= self.learning_rate * gradient
 
+                # the bias absorbs the class prior and is updated without regularization
                 self.bias -= self.learning_rate * error
 
     def predict_positive_scores(self, vectors: list[dict[int, float]]) -> list[float]:
+        """Return the predicted positive-class probability for each input vector.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.\\
+        Returns one sigmoid-squashed probability in [0, 1] per vector.
+        """
         return [sigmoid(self._decision_function(vector)) for vector in vectors]
 
     def predict(self, vectors: list[dict[int, float]]) -> list[str]:
+        """Return a hard class label per vector by thresholding the positive score at 0.5.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.\\
+        Returns the positive label or "no" for each vector.
+        """
         return [
             POSITIVE_LABEL if score >= 0.5 else "no"
             for score in self.predict_positive_scores(vectors)
         ]
 
     def _decision_function(self, vector: dict[int, float]) -> float:
+        """Return the raw linear score (logit) for a single vector before the sigmoid.
+
+        vector: one sparse TF-IDF row as a {feature_index: weight} map.\\
+        Returns bias plus the dot product of the weights with the present features.
+        """
         return self.bias + sum(self.weights[index] * value for index, value in vector.items())
 
 
 
 def top_weighted_terms(vectorizer: TfidfVectorizer, model: LogisticRegression, limit: int = 10) -> dict[str, list[dict[str, float]]]:
+    """Return the most influential vocabulary terms in each direction of the decision.
+
+    vectorizer: the fitted vectorizer whose vocabulary maps terms to indices.
+    model: the trained logistic regression whose weights rank the terms.
+    limit: how many terms to keep per side.\\
+    Returns a dict with the top positive-pushing and negative-pushing terms and weights.
+    """
+    # invert the vocabulary so we can label each weight with its term
     index_to_term = {index: term for term, index in vectorizer.vocabulary.items()}
     weighted_terms = [
         (index_to_term[index], weight)
         for index, weight in enumerate(model.weights)
         if index in index_to_term
     ]
+    # the largest positive weights push toward the positive label
     positive_terms = sorted(weighted_terms, key=lambda item: item[1], reverse=True)[:limit]
+    # the most negative weights push toward the negative label
     negative_terms = sorted(weighted_terms, key=lambda item: item[1])[:limit]
 
     return {
@@ -98,6 +136,11 @@ def top_weighted_terms(vectorizer: TfidfVectorizer, model: LogisticRegression, l
 
 
 def parse_args() -> argparse.Namespace:
+    """Build the command-line argument parser and return the parsed arguments.
+
+    Combines the arguments shared by every model with the TF-IDF and logistic regression specific options. 
+    Returns the populated argparse.Namespace.
+    """
     parser = argparse.ArgumentParser(description="Train and evaluate a TF-IDF logistic regression baseline model.")
 
     # parsers that are general to all models
@@ -119,6 +162,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def main() -> None:
+    """Run the end-to-end training and evaluation pipeline for this baseline.
+
+    Loads the dataset, splits it, vectorizes the text, trains the logistic regression
+    model, evaluates it on the test split, optionally exports the metrics JSON, and
+    prints a human-readable summary. Takes no arguments and returns nothing.
+    """
     args = parse_args()
     records = load_records(args.data)
     train_records, test_records = split_records(records, args.test_size, args.seed)

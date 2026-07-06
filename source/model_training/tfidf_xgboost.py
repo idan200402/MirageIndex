@@ -48,6 +48,14 @@ class RegressionTree:
         self.root: "RegressionTree._Node | None" = None
 
     def fit(self, vectors: list[dict[int, float]], gradients: list[float], hessians: list[float], feature_count: int) -> None:
+        """Grow a single regression tree that fits the current boosting residuals.
+
+        vectors: sparse TF-IDF rows, each a {feature_index: weight} mapping.
+        gradients / hessians: per-sample first- and second-order logistic loss derivatives.
+        feature_count: size of the feature space that splits are drawn from. \\
+        Returns nothing. \\
+        The fitted tree is stored on self.root.
+        """
         if not (len(vectors) == len(gradients) == len(hessians)):
             raise ValueError("vectors, gradients and hessians must have the same length")
         if not vectors:
@@ -64,9 +72,20 @@ class RegressionTree:
         self.root = self._grow_tree(indices, vectors, gradients, hessians, depth=0)
 
     def predict_margins(self, vectors: list[dict[int, float]]) -> list[float]:
+        """Return this tree's additive margin contribution for each input vector.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.\\
+        Returns one leaf weight per vector, in the same order.
+        """
         return [self._traverse_tree(vector, self.root) for vector in vectors]
 
     def _grow_tree(self, indices: list[int], vectors: list[dict[int, float]], gradients: list[float], hessians: list[float], depth: int) -> "RegressionTree._Node":
+        """Recursively build a node from the samples referenced by indices.
+
+        indices: positions into vectors/gradients/hessians handled at this node.
+        depth: current recursion depth, checked against max_depth.\\
+        Returns an internal node when a positive-gain split is found, otherwise a leaf.
+        """
         # gradient and hessian totals drive both the leaf weight and the gain
         G = sum(gradients[index] for index in indices)
         H = sum(hessians[index] for index in indices)
@@ -91,6 +110,12 @@ class RegressionTree:
         return RegressionTree._Node(feature_index=feature_index, threshold=0.0, left=left, right=right)
 
     def _best_split(self, indices: list[int], vectors: list[dict[int, float]], gradients: list[float], hessians: list[float], feature_subset: list[int], G: float, H: float) -> tuple[int, list[int], list[int]] | None:
+        """Find the feature in feature_subset that yields the largest split gain.
+
+        indices: samples to partition. feature_subset: candidate features to test.
+        G / H: gradient and hessian totals over indices, reused to score each split.\\
+        Returns (feature_index, left_indices, right_indices) for the best gain, or None.
+        """
         best_gain = 0.0
         best_split = None
 
@@ -98,7 +123,8 @@ class RegressionTree:
             # threshold 0.0 splits term-absent (left) from term-present (right)
             left_indices = []
             right_indices = []
-            # only present rows are summed; the absent side falls out by subtraction
+            # only present rows are summed 
+            # the absent side falls out by subtraction
             G_right = 0.0
             H_right = 0.0
             for index in indices:
@@ -127,6 +153,11 @@ class RegressionTree:
         return best_split
 
     def _traverse_tree(self, vector: dict[int, float], node: "RegressionTree._Node") -> float:
+        """Walk a single vector from node down to a leaf and return its margin weight.
+
+        vector: one sparse TF-IDF row. node: current node in the recursion.\\
+        Returns the leaf's stored margin weight.
+        """
         # a leaf carries the additive margin weight
         if node.value is not None:
             return node.value
@@ -173,6 +204,14 @@ class XGBoost:
         self.base_score = 0.0
 
     def fit(self, vectors: list[dict[int, float]], labels: list[int], feature_count: int) -> None:
+        """Train the boosted ensemble by fitting one tree per round to the loss gradients.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.
+        labels: binary labels (1 = positive, 0 = negative), aligned with vectors.
+        feature_count: size of the vocabulary / feature space.\\
+        Returns nothing. \\
+        The base score and fitted trees are stored on the instance.
+        """
         if len(vectors) != len(labels):
             raise ValueError("vectors and labels must have the same length")
         if not vectors:
@@ -213,6 +252,12 @@ class XGBoost:
             self.trees.append(tree)
 
     def predict_positive_scores(self, vectors: list[dict[int, float]]) -> list[float]:
+        """Return the predicted positive-class probability for each input vector.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.\\
+        Returns one probability in [0, 1] per vector, obtained by summing the base
+        score and every tree's shrunken margin and passing the total through a sigmoid.
+        """
         totals = [self.base_score] * len(vectors)
         for tree in self.trees:
             for index, margin in enumerate(tree.predict_margins(vectors)):
@@ -220,12 +265,22 @@ class XGBoost:
         return [sigmoid(total) for total in totals]
 
     def predict(self, vectors: list[dict[int, float]]) -> list[str]:
+        """Return a hard class label per vector by thresholding the positive score at 0.5.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.\\
+        Returns the positive label or "no" for each vector.
+        """
         return [
             POSITIVE_LABEL if score >= 0.5 else "no"
             for score in self.predict_positive_scores(vectors)
         ]
 
 def parse_args() -> argparse.Namespace:
+    """Build the command-line argument parser and return the parsed arguments.
+
+    Combines the arguments shared by every model with the TF-IDF and XGBoost
+    specific options. Returns the populated argparse.Namespace.
+    """
     parser = argparse.ArgumentParser(description="Train and evaluate a TF-IDF XGBoost baseline model.")
 
     # parsers that are general to all models
@@ -251,6 +306,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def main() -> None:
+    """Run the end-to-end training and evaluation pipeline for this baseline.
+
+    Loads the dataset, splits it, vectorizes the text, trains the XGBoost model,
+    evaluates it on the test split, optionally exports the metrics JSON, and prints
+    a human-readable summary. Takes no arguments and returns nothing.
+    """
     args = parse_args()
     records = load_records(args.data)
     train_records, test_records = split_records(records, args.test_size, args.seed)

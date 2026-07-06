@@ -23,8 +23,8 @@ def load_records(path: Path) -> list[dict[str, Any]]:
       - a single JSON object    -> wrapped in a one-element list
       - JSONL (one JSON object per line) -> parsed line by line, blank lines skipped
 
-    The JSON array/object path is tried first; if the whole file is not valid
-    JSON, it falls back to parsing line by line as JSONL.
+    The JSON array/object path is tried first, if the whole file is not valid JSON,
+    it falls back to parsing line by line as JSONL.
 
     Raises ValueError if any line/item is not a JSON object, or if the top-level
     JSON is neither an object nor a list.

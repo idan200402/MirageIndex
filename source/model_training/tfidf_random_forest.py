@@ -41,6 +41,14 @@ class DecisionTree:
         self.root: "DecisionTree._Node | None" = None
 
     def fit(self, vectors: list[dict[int, float]], labels: list[int], feature_count: int) -> None:
+        """Grow a single decision tree from the given samples.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.
+        labels: binary labels (1 = positive, 0 = negative), aligned with vectors.
+        feature_count: size of the feature space that splits are drawn from.
+        Returns nothing. \\
+        The fitted tree is stored on self.root.
+        """
         if len(vectors) != len(labels):
             raise ValueError("vectors and labels must have the same length")
         if not vectors:
@@ -57,9 +65,20 @@ class DecisionTree:
         self.root = self._grow_tree(indices, vectors, labels, depth=0)
 
     def predict_positive_scores(self, vectors: list[dict[int, float]]) -> list[float]:
+        """Return this tree's positive-label probability for each input vector.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.
+        Returns the leaf probability reached by each vector, in input order.
+        """
         return [self._traverse_tree(vector, self.root) for vector in vectors]
 
     def _grow_tree(self, indices: list[int], vectors: list[dict[int, float]], labels: list[int], depth: int) -> "DecisionTree._Node":
+        """Recursively build a node from the samples referenced by indices.
+
+        indices: positions into vectors/labels handled at this node.
+        depth: current recursion depth, checked against max_depth.\\
+        Returns an internal node when an impurity-reducing split is found, otherwise a leaf.
+        """
         n = len(indices)
         # the fraction of samples at this node with a positive label
         p = sum(labels[index] for index in indices) / n
@@ -84,6 +103,13 @@ class DecisionTree:
         return DecisionTree._Node(feature_index=feature_index, threshold=threshold, left=left, right=right)
 
     def _best_split(self, indices: list[int], vectors: list[dict[int, float]], labels: list[int], feature_subset: list[int]) -> tuple[int, float, list[int], list[int]] | None:
+        """Find the feature in feature_subset that most reduces Gini impurity.
+
+        indices: samples to partition.
+        feature_subset: candidate features to test. \\
+        Returns (feature_index, threshold, left_indices, right_indices) for the best
+        gain, or None when no split improves impurity.
+        """
         parent_gini = self._gini(indices, labels)
         n = len(indices)
         best_gain = 0.0
@@ -114,10 +140,22 @@ class DecisionTree:
         return best_split
 
     def _gini(self, indices: list[int], labels: list[int]) -> float:
+        """Return the binary Gini impurity of the samples referenced by indices.
+
+        indices: positions into labels to measure.
+        labels: the binary label list.\\
+        Returns the impurity, which is 0 for a pure node and 0.5 for an even split.
+        """
         p = sum(labels[index] for index in indices) / len(indices)
         return 1 - (p ** 2 + (1 - p) ** 2)
 
     def _traverse_tree(self, vector: dict[int, float], node: "DecisionTree._Node") -> float:
+        """Walk a single vector from node down to a leaf and return its probability.
+
+        vector: one sparse TF-IDF row.
+        node: current node in the recursion.\\
+        Returns the leaf's stored positive-label probability.
+        """
         # a leaf carries the positive-label probability
         if node.value is not None:
             return node.value
@@ -154,6 +192,14 @@ class RandomForest:
         self.trees: list[DecisionTree] = []
 
     def fit(self, vectors: list[dict[int, float]], labels: list[int], feature_count: int) -> None:
+        """Train the forest by fitting each tree to its own bootstrap sample.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.
+        labels: binary labels (1 = positive, 0 = negative), aligned with vectors.
+        feature_count: size of the vocabulary / feature space.\\
+        Returns nothing.\\
+        The fitted trees are stored on the instance.
+        """
         if len(vectors) != len(labels):
             raise ValueError("vectors and labels must have the same length")
         if not vectors:
@@ -181,6 +227,11 @@ class RandomForest:
             self.trees.append(tree)
 
     def predict_positive_scores(self, vectors: list[dict[int, float]]) -> list[float]:
+        """Return the forest's positive-label probability for each input vector.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.\\
+        Returns one probability per vector, averaged across every tree in the forest.
+        """
         totals = [0.0] * len(vectors)
         for tree in self.trees:
             for index, score in enumerate(tree.predict_positive_scores(vectors)):
@@ -188,12 +239,22 @@ class RandomForest:
         return [total / len(self.trees) for total in totals]
 
     def predict(self, vectors: list[dict[int, float]]) -> list[str]:
+        """Return a hard class label per vector by thresholding the positive score at 0.5.
+
+        vectors: sparse TF-IDF rows as {feature_index: weight} maps.\\
+        Returns the positive label or "no" for each vector.
+        """
         return [
             POSITIVE_LABEL if score >= 0.5 else "no"
             for score in self.predict_positive_scores(vectors)
         ]
 
 def parse_args() -> argparse.Namespace:
+    """Build the command-line argument parser and return the parsed arguments.
+
+    Combines the arguments shared by every model with the TF-IDF and random forest specific options.
+    Returns the populated argparse.Namespace.
+    """
     parser = argparse.ArgumentParser(description="Train and evaluate a TF-IDF random forest baseline model.")
     
     # parsers that are general to all models
@@ -217,6 +278,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def main() -> None:
+    """Run the end-to-end training and evaluation pipeline for this baseline.
+
+    Loads the dataset, splits it, vectorizes the text, trains the random forest model,
+    evaluates it on the test split, optionally exports the metrics JSON, and prints
+    a human-readable summary. Takes no arguments and returns nothing.
+    """
     args = parse_args()
     records = load_records(args.data)
     train_records, test_records = split_records(records, args.test_size, args.seed)

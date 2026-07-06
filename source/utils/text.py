@@ -34,7 +34,7 @@ class TfidfVectorizer:
 
     Learns a vocabulary from a training corpus and converts each document into a
     sparse, L2-normalized TF-IDF vector. "Sparse" here means each vector is a
-    ``dict[int, float]`` mapping a term's vocabulary index to its weight; terms
+    ``dict[int, float]`` mapping a term's vocabulary index to its weight, terms
     not present in the document are simply absent (implicitly 0.0).
 
     Weighting scheme:
@@ -58,7 +58,7 @@ class TfidfVectorizer:
     """
 
     def __init__(self, max_features: int = 20000, min_df: int = 1) -> None:
-        """Configure the vectorizer; does not learn anything yet.
+        """Configure the vectorizer, does not learn anything yet.
 
         Validates the hyperparameters and initializes an empty vocabulary/IDF
         table. Raises ValueError if ``max_features`` or ``min_df`` is not positive.
@@ -79,7 +79,7 @@ class TfidfVectorizer:
         document frequency, then selects the terms: those appearing in at least
         ``min_df`` documents, ranked by total frequency, capped at
         ``max_features``. The selected terms become ``vocabulary`` (term -> index)
-        and their IDF weights are computed into ``idf``. Nothing is returned;
+        and their IDF weights are computed into ``idf``. Nothing is returned.
         state is stored on the instance.
         """
         document_frequency: Counter[str] = Counter()
@@ -111,7 +111,7 @@ class TfidfVectorizer:
         tokens are ignored, and a document with no known tokens yields an empty
         vector ({}). Returns one ``dict[int, float]`` per input text, in order.
 
-        Must be called after ``fit``; raises ValueError if the vocabulary is empty.
+        Must be called after ``fit``, raises ValueError if the vocabulary is empty.
         """
         if not self.vocabulary:
             raise ValueError("Vectorizer must be fitted before transform")

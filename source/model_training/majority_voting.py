@@ -21,15 +21,28 @@ from source.utils.data import LABEL_FIELD
 MODEL_NAME = "majority_voting"
 
 def choose_majority_label(records: list[dict[str, Any]]) -> str:
+    """Return the label that appears most often across the given records.
+
+    records: dataset rows, each expected to carry a LABEL_FIELD entry.\\
+    Returns the single most common label, raises ValueError if none are present.
+    """
+    # tally how many times each label value shows up
     label_counts = Counter(record.get(LABEL_FIELD) for record in records)
+    # records missing a label contribute a None key, which is not a real class
     label_counts.pop(None, None)
 
     if not label_counts:
         raise ValueError(f"No labels found in field {LABEL_FIELD!r}")
 
+    # most_common(1) returns [(label, count)], so index into the label
     return label_counts.most_common(1)[0][0]
 
 def parse_args() -> argparse.Namespace:
+    """Build the command-line argument parser and return the parsed arguments.
+
+    The majority-voting baseline only needs the arguments shared by every model plus a model name.
+    Returns the populated argparse.Namespace.
+    """
     parser = argparse.ArgumentParser(description="Evaluate a majority-voting baseline model.")
     
     # parsers that are general to all models
@@ -43,12 +56,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def main() -> None:
+    """Run the end-to-end evaluation pipeline for the majority-voting baseline.
+
+    Loads the dataset, splits it, learns the majority label from the train split,
+    predicts that same label for every test row, optionally exports the metrics JSON,
+    and prints a human-readable summary. Takes no arguments and returns nothing.
+    """
     args = parse_args()
     records = load_records(args.data)
     train_records, test_records = split_records(records, args.test_size, args.seed)
+    # the only thing this baseline "learns" is the most common training label
     prediction = choose_majority_label(train_records)
     y_true = [record.get(LABEL_FIELD) for record in test_records]
+    # every test row receives the same predicted label
     y_pred = [prediction] * len(test_records)
+    # a constant prediction yields a constant positive score of 1.0 or 0.0
     positive_score = 1.0 if prediction == "yes" else 0.0
     y_score = [positive_score] * len(test_records)
     metrics = classification_metrics(y_true=y_true, y_pred=y_pred, y_score=y_score)

@@ -33,37 +33,67 @@ class MultinomialNaiveBayes:
         self.total_tokens_by_label: Counter[str] = Counter()
 
     def fit(self, texts: list[str], labels: list[str]) -> None:
+        """Estimate per-label priors and token frequencies from the training data.
+
+        texts: raw training documents. 
+        labels: the class label for each document, aligned with texts.\\
+        Returns nothing.\\
+        The learned counts and vocabulary are stored on the instance.
+        """
         if len(texts) != len(labels):
             raise ValueError("texts and labels must have the same length")
         if not texts:
             raise ValueError("Cannot train on an empty dataset")
 
         for text, label in zip(texts, labels):
+            # count documents per label to form the class priors later
             self.label_counts[label] += 1
             tokens = tokenize(text)
+            # the vocabulary is the union of every token seen in training
             self.vocabulary.update(tokens)
+            # accumulate per-label token frequencies and their running totals
             self.token_counts_by_label[label].update(tokens)
             self.total_tokens_by_label[label] += len(tokens)
 
+        # a stable, sorted label order keeps downstream iteration deterministic
         self.labels = sorted(self.label_counts)
 
     def predict(self, texts: list[str]) -> list[str]:
+        """Return the most likely label for each input document.
+
+        texts: raw documents to classify.\\
+        Returns the argmax-log-probability label per document, in input order.
+        """
         return [max(self._log_probabilities(text), key=self._log_probabilities(text).get) for text in texts]
 
     def predict_positive_scores(self, texts: list[str], positive_label: str) -> list[float]:
+        """Return the normalized probability of positive_label for each document.
+
+        texts: raw documents to score.
+        positive_label: the class of interest.\\
+        Returns one probability in [0, 1] per document, in input order.
+        """
         return [self._probabilities(text).get(positive_label, 0.0) for text in texts]
 
     def _log_probabilities(self, text: str) -> dict[str, float]:
+        """Compute the unnormalized log-posterior of each label for one document.
+
+        text: the raw document to score.\\
+        Returns a {label: log_probability} mapping over every known label.
+        """
         total_examples = sum(self.label_counts.values())
         vocabulary_size = len(self.vocabulary)
         tokens = tokenize(text)
         log_probabilities = {}
 
         for label in self.labels:
+            # start from the log prior: the share of training docs with this label
             log_probability = math.log(self.label_counts[label] / total_examples)
+            # Laplace smoothing spreads alpha mass across the whole vocabulary
             denominator = self.total_tokens_by_label[label] + self.alpha * vocabulary_size
 
             for token in tokens:
+                # summing log-likelihoods keeps the product numerically stable
                 token_count = self.token_counts_by_label[label][token]
                 log_probability += math.log((token_count + self.alpha) / denominator)
 
@@ -72,16 +102,28 @@ class MultinomialNaiveBayes:
         return log_probabilities
 
     def _probabilities(self, text: str) -> dict[str, float]:
+        """Convert the log-posteriors of one document into normalized probabilities.
+
+        text: the raw document to score.\\
+        Returns a {label: probability} mapping whose values sum to 1.
+        """
         log_probabilities = self._log_probabilities(text)
+        # subtracting the max before exponentiating avoids overflow (log-sum-exp trick)
         max_log_probability = max(log_probabilities.values())
         exp_values = {
             label: math.exp(log_probability - max_log_probability)
             for label, log_probability in log_probabilities.items()
         }
+        # dividing by the total renormalizes the shifted exponentials back to probabilities
         normalizer = sum(exp_values.values())
         return {label: value / normalizer for label, value in exp_values.items()}
 
 def parse_args() -> argparse.Namespace:
+    """Build the command-line argument parser and return the parsed arguments.
+
+    Combines the arguments shared by every model with the Naive Bayes specific smoothing option. 
+    Returns the populated argparse.Namespace.
+    """
     parser = argparse.ArgumentParser(description="Train and evaluate a Naive Bayes text baseline model.")
     # parsers that are general to all models
     parser = add_common_parsing(parser)
@@ -102,6 +144,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def main() -> None:
+    """Run the end-to-end training and evaluation pipeline for this baseline.
+
+    Loads the dataset, splits it, trains the Naive Bayes model on the raw text,
+    evaluates it on the test split, optionally exports the metrics JSON, and prints
+    a human-readable summary. Takes no arguments and returns nothing.
+    """
     args = parse_args()
     records = load_records(args.data)
     train_records, test_records = split_records(records, args.test_size, args.seed)
