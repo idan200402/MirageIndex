@@ -10,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from source.utils.LLM_train import (
+    add_learning_rate_grid_arg,
     add_llm_training_args,
     count_parameters,
     evaluate_loss,
@@ -17,6 +18,7 @@ from source.utils.LLM_train import (
     load_backbone,
     make_dataloaders,
     output_dir_for,
+    parse_learning_rates,
     predict,
     prepare_tokenizer,
     require_torch_and_transformers,
@@ -47,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser = add_common_parsing(parser)
     parser.set_defaults(seed=42, export_metrics=True)
-    parser = add_llm_training_args(parser, MODEL_NAME)
+    parser = add_llm_training_args(parser, MODEL_NAME, include_learning_rate=False)
     parser.set_defaults(epochs=15)
     parser.add_argument("--lora-r", type=int, default=8, help="LoRA adapter rank.")
     parser.add_argument("--lora-alpha", type=float, default=16.0, help="LoRA adapter scaling alpha.")
@@ -57,14 +59,7 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_LORA_TARGET_MODULES,
         help="Comma-separated attention projection module names to wrap with LoRA adapters.",
     )
-    parser.add_argument(
-        "--learning-rates",
-        default=DEFAULT_LEARNING_RATES,
-        help=(
-            "Comma-separated learning rates to grid search. "
-            f"Defaults to {DEFAULT_LEARNING_RATES}."
-        ),
-    )
+    parser = add_learning_rate_grid_arg(parser, DEFAULT_LEARNING_RATES)
     return parser.parse_args()
 
 
@@ -84,13 +79,6 @@ def validate_lora_args(args: argparse.Namespace) -> None:
 
 def parse_target_modules(value: str) -> tuple[str, ...]:
     return tuple(module_name.strip() for module_name in value.split(",") if module_name.strip())
-
-
-def parse_learning_rates(value: str) -> tuple[float, ...]:
-    learning_rates = tuple(float(item.strip()) for item in value.split(",") if item.strip())
-    if any(learning_rate <= 0 for learning_rate in learning_rates):
-        raise ValueError("learning_rates must all be greater than 0")
-    return learning_rates
 
 
 def make_lora_linear_class(nn: Any, torch: Any) -> Any:
