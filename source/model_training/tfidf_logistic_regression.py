@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from source.utils.text import TfidfVectorizer
 
 # utility function imports
-from source.utils.training_metrics import classification_metrics, maybe_export_metrics_json
+from source.utils.training_metrics import classification_metrics, maybe_export_metrics_json, project_relative_path
 from source.utils.data import load_records, split_records, print_label_distribution
 from source.utils.text import record_to_text
 from source.utils.general import add_common_parsing, sigmoid
@@ -209,7 +209,7 @@ def main() -> None:
     }
     metrics_payload = {
         "model_name": args.model_name,
-        "data_path": str(args.data),
+        "data_path": project_relative_path(args.data),
         "seed": args.seed,
         "test_size": args.test_size,
         "train_examples": len(train_records),

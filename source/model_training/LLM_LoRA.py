@@ -35,7 +35,7 @@ from source.utils.LLM_train import (
 from source.utils.data import LABEL_FIELD, print_label_distribution
 from source.utils.general import add_common_parsing
 from source.utils.text import POSITIVE_LABEL, TEXT_FIELDS
-from source.utils.training_metrics import classification_metrics, export_metrics_json
+from source.utils.training_metrics import classification_metrics, export_metrics_json, project_relative_path
 
 
 # file specific constants
@@ -416,7 +416,7 @@ def main() -> None:
     metrics_payload = {
         "model_name": args.model_name,
         "base_model": args.base_model,
-        "data_path": str(args.data),
+        "data_path": project_relative_path(args.data),
         "seed": args.seed,
         "test_size": args.test_size,
         "val_size": args.val_size,
@@ -428,7 +428,7 @@ def main() -> None:
         "test_loss": test_loss,
         "training_history": training_history,
         "artifacts": {
-            "best_lora_head_weights": str(best_lora_path) if args.export_metrics else None,
+            "best_lora_head_weights": project_relative_path(best_lora_path) if args.export_metrics else None,
         },
         "trained_parameters": {
             "frozen_backbone": args.base_model,
