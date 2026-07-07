@@ -1,7 +1,9 @@
+# standard library imports
 import random
 from pathlib import Path
 from typing import Any, Callable
 
+# utility imports
 from source.utils.data import LABEL_FIELD, load_records, split_records
 from source.utils.text import POSITIVE_LABEL, record_to_text
 
@@ -11,12 +13,21 @@ DEFAULT_MODERNBERT_MODEL = "answerdotai/ModernBERT-large"
 
 
 def require_torch_and_transformers(caller: str) -> tuple[Any, Any, Any, Any, Any, Any]:
+    """Import torch and the causal-LM transformers pieces, failing loudly if missing.
+
+    caller: name of the calling module, used to make the error message specific.\\
+    Returns the (torch, nn, DataLoader, Dataset, AutoModelForCausalLM, AutoTokenizer)
+    tuple so heavy dependencies are only imported when a model actually needs them.
+    Raises ImportError with install guidance when torch or transformers cannot load.
+    """
+    # torch and transformers are optional heavyweight deps, so import them lazily
     try:
         import torch
         from torch import nn
         from torch.utils.data import DataLoader, Dataset
         from transformers import AutoModelForCausalLM, AutoTokenizer
     except (ImportError, OSError) as exc:
+        # surface a single actionable message instead of a raw import traceback
         raise ImportError(
             f"{caller} requires working torch and transformers installations. "
             "Install or repair them with: pip install torch transformers"
@@ -26,12 +37,21 @@ def require_torch_and_transformers(caller: str) -> tuple[Any, Any, Any, Any, Any
 
 
 def require_torch_and_encoder_transformers(caller: str) -> tuple[Any, Any, Any, Any, Any, Any]:
+    """Import torch and the encoder transformers pieces, failing loudly if missing.
+
+    caller: name of the calling module, used to make the error message specific.\\
+    Returns the (torch, nn, DataLoader, Dataset, AutoModel, AutoTokenizer) tuple for
+    encoder backbones. Raises ImportError with install guidance when torch or
+    transformers cannot load.
+    """
+    # same lazy import as above but pulls the encoder AutoModel instead of the causal LM
     try:
         import torch
         from torch import nn
         from torch.utils.data import DataLoader, Dataset
         from transformers import AutoModel, AutoTokenizer
     except (ImportError, OSError) as exc:
+        # surface a single actionable message instead of a raw import traceback
         raise ImportError(
             f"{caller} requires working torch and transformers installations. "
             "Install or repair them with: pip install torch transformers"
@@ -47,6 +67,13 @@ def add_llm_training_args(
     model_family: str = "Qwen",
     include_learning_rate: bool = True,
 ) -> Any:
+    """Register the training arguments shared by the LLM-based models onto a parser.
+
+    parser: the argparse parser to extend. model_name: default artifact name.
+    default_base_model / model_family: backbone id and label shown in help text.
+    include_learning_rate: whether to add a single --learning-rate option.\\
+    Returns the same parser with the common LLM options attached.
+    """
     parser.add_argument(
         "--model-name",
         default=model_name,
@@ -66,6 +93,7 @@ def add_llm_training_args(
     parser.add_argument("--max-length", type=int, default=512, help="Maximum tokenized input length.")
     parser.add_argument("--batch-size", type=int, default=8, help="Training/evaluation batch size.")
     parser.add_argument("--epochs", type=int, default=5, help="Maximum number of training epochs.")
+    # grid-search scripts omit this and add their own --learning-rates instead
     if include_learning_rate:
         parser.add_argument("--learning-rate", type=float, default=1e-3, help="Training learning rate.")
     parser.add_argument("--weight-decay", type=float, default=0.0, help="Optimizer weight decay.")
@@ -85,6 +113,12 @@ def add_llm_training_args(
 
 
 def add_learning_rate_grid_arg(parser: Any, default_learning_rates: str) -> Any:
+    """Add the --learning-rates option used by grid-search training scripts.
+
+    parser: the argparse parser to extend. default_learning_rates: comma-separated
+    default string shown in the help text.\\
+    Returns the same parser with the option attached.
+    """
     parser.add_argument(
         "--learning-rates",
         default=default_learning_rates,
@@ -97,6 +131,13 @@ def add_learning_rate_grid_arg(parser: Any, default_learning_rates: str) -> Any:
 
 
 def parse_learning_rates(value: str) -> tuple[float, ...]:
+    """Parse a comma-separated string of learning rates into a tuple of floats.
+
+    value: the raw "0.001,0.0005" style string from the command line.\\
+    Returns the parsed learning rates as a tuple. Raises ValueError if any parsed
+    rate is not greater than 0.
+    """
+    # split on commas and drop empty fragments left by trailing or doubled commas
     learning_rates = tuple(float(item.strip()) for item in value.split(",") if item.strip())
     if any(learning_rate <= 0 for learning_rate in learning_rates):
         raise ValueError("learning_rates must all be greater than 0")
@@ -104,6 +145,12 @@ def parse_learning_rates(value: str) -> tuple[float, ...]:
 
 
 def validate_llm_args(args: Any) -> None:
+    """Check that the parsed LLM training arguments hold sane values.
+
+    args: the argparse namespace to validate.\\
+    Returns nothing. Raises ValueError on the first argument that is out of range
+    (val_size, max_length, batch_size, epochs, learning_rate, or weight_decay).
+    """
     if not 0 < args.val_size < 1:
         raise ValueError("val_size must be between 0 and 1")
     if args.max_length <= 0:
@@ -112,6 +159,7 @@ def validate_llm_args(args: Any) -> None:
         raise ValueError("batch_size must be greater than 0")
     if args.epochs <= 0:
         raise ValueError("epochs must be greater than 0")
+    # learning_rate is absent on grid-search runs, so only validate it when present
     if hasattr(args, "learning_rate") and args.learning_rate <= 0:
         raise ValueError("learning_rate must be greater than 0")
     if args.weight_decay < 0:
@@ -119,61 +167,120 @@ def validate_llm_args(args: Any) -> None:
 
 
 def set_seed(seed: int, torch: Any) -> None:
+    """Seed the Python and torch RNGs so a run is reproducible.
+
+    seed: the integer seed to apply. torch: the injected torch module.\\
+    Returns nothing. Also seeds every CUDA device when CUDA is available.
+    """
     random.seed(seed)
     torch.manual_seed(seed)
+    # cover the GPU generators too when training on CUDA
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
 
 def select_device(device_arg: str, torch: Any) -> Any:
+    """Resolve the requested device string into a torch.device.
+
+    device_arg: one of "auto", "cpu", or "cuda". torch: the injected torch module.\\
+    Returns a torch.device, preferring CUDA when available under "auto". Raises
+    ValueError if "cuda" is requested but no CUDA device is present.
+    """
+    # auto falls back to cpu whenever no gpu is available
     if device_arg == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # an explicit cuda request must not silently degrade to cpu
     if device_arg == "cuda" and not torch.cuda.is_available():
         raise ValueError("CUDA was requested, but torch.cuda.is_available() is False")
     return torch.device(device_arg)
 
 
 def select_dtype(dtype_arg: str, device: Any, torch: Any) -> Any:
+    """Resolve the requested dtype string into a torch dtype for the backbone.
+
+    dtype_arg: one of "auto", "float32", "float16", or "bfloat16". device: the
+    target device. torch: the injected torch module.\\
+    Returns a torch dtype, forcing float32 on CPU and defaulting to float16 under
+    "auto" on other devices.
+    """
+    # half precision is unreliable on cpu, so cpu always runs in float32
     if dtype_arg == "float32" or device.type == "cpu":
         return torch.float32
     if dtype_arg == "float16":
         return torch.float16
     if dtype_arg == "bfloat16":
         return torch.bfloat16
+    # auto on a gpu defaults to float16
     return torch.float16
 
 
 def split_llm_records(args: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Load the dataset and carve it into train, validation, and test splits.
+
+    args: namespace holding the data path, test_size, val_size, and seed.\\
+    Returns (train_records, val_records, test_records). The validation split is
+    drawn from the train split so the test split never leaks into tuning.
+    """
     records = load_records(args.data)
     train_records, test_records = split_records(records, args.test_size, args.seed)
+    # carve validation out of the train split so the test split stays untouched
     model_train_records, val_records = split_records(train_records, args.val_size, args.seed)
     return model_train_records, val_records, test_records
 
 
 def prepare_tokenizer(base_model: str, AutoTokenizer: Any) -> Any:
+    """Load the tokenizer for a base model and guarantee it has a pad token.
+
+    base_model: Hugging Face model id. AutoTokenizer: the injected loader class.\\
+    Returns the ready-to-use tokenizer, falling back to the eos token for padding
+    when the model defines no pad token.
+    """
     tokenizer = AutoTokenizer.from_pretrained(base_model)
+    # many causal LMs ship without a pad token, so reuse eos for padding
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     return tokenizer
 
 
 def load_backbone(base_model: str, dtype: Any, device: Any, AutoModelForCausalLM: Any) -> Any:
+    """Load a causal-LM backbone onto a device and disable its KV cache.
+
+    base_model: Hugging Face model id. dtype / device: how and where to place it.
+    AutoModelForCausalLM: the injected loader class.\\
+    Returns the loaded backbone. Caching is turned off because training only needs
+    the hidden states, not incremental generation.
+    """
     backbone = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=dtype)
     backbone.to(device)
+    # the kv cache only helps autoregressive generation, which we never do here
     if hasattr(backbone.config, "use_cache"):
         backbone.config.use_cache = False
     return backbone
 
 
 def freeze_module(module: Any) -> None:
+    """Freeze every parameter of a module so it is not updated during training.
+
+    module: the torch module to freeze.\\
+    Returns nothing. Sets requires_grad to False on all parameters in place.
+    """
     for parameter in module.parameters():
         parameter.requires_grad = False
 
 
 def make_dataset_class(torch: Any, Dataset: Any) -> Any:
+    """Build a torch Dataset subclass that yields text/label pairs from records.
+
+    torch / Dataset: the injected torch module and base Dataset class.\\
+    Returns a HallucinationDataset class. Each item exposes the record's flattened
+    text and its binary label (1.0 for the positive label, 0.0 otherwise).
+    """
+    # defined inside so it can close over the injected torch and Dataset
     class HallucinationDataset(Dataset):
         def __init__(self, records: list[dict[str, Any]]) -> None:
+            # flatten each record's text fields up front so __getitem__ stays cheap
             self.texts = [record_to_text(record) for record in records]
+            # map the categorical label onto the float target the loss expects
             self.labels = [
                 1.0 if record[LABEL_FIELD] == POSITIVE_LABEL else 0.0
                 for record in records
@@ -189,7 +296,15 @@ def make_dataset_class(torch: Any, Dataset: Any) -> Any:
 
 
 def make_collate_fn(tokenizer: Any, max_length: int, torch: Any) -> Any:
+    """Build a collate function that tokenizes and batches records for a DataLoader.
+
+    tokenizer: the tokenizer to apply. max_length: truncation length. torch: the
+    injected torch module.\\
+    Returns a collate_fn that pads and truncates a batch of items into model-ready
+    tensors and attaches the stacked float labels under the "labels" key.
+    """
     def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
+        # tokenize the whole batch together so padding is to the batch max length
         encoded = tokenizer(
             [item["text"] for item in batch],
             padding=True,
@@ -197,6 +312,7 @@ def make_collate_fn(tokenizer: Any, max_length: int, torch: Any) -> Any:
             max_length=max_length,
             return_tensors="pt",
         )
+        # stack the per-item labels alongside the tokenized inputs
         encoded["labels"] = torch.stack([item["label"] for item in batch]).float()
         return encoded
 
@@ -213,14 +329,22 @@ def make_dataloaders(
     DataLoader: Any,
     Dataset: Any,
 ) -> tuple[Any, Any, Any]:
+    """Wrap the three record splits into ready-to-iterate DataLoaders.
+
+    train/val/test_records: the split datasets. tokenizer and args: supply the
+    collate configuration and batch size. torch, DataLoader, Dataset: injected deps.\\
+    Returns (train_loader, val_loader, test_loader). Only the train loader shuffles.
+    """
     dataset_class = make_dataset_class(torch, Dataset)
     collate_fn = make_collate_fn(tokenizer, args.max_length, torch)
+    # shuffle training data each epoch so batch composition varies
     train_loader = DataLoader(
         dataset_class(train_records),
         batch_size=args.batch_size,
         shuffle=True,
         collate_fn=collate_fn,
     )
+    # validation and test stay in a fixed order for stable, comparable metrics
     val_loader = DataLoader(
         dataset_class(val_records),
         batch_size=args.batch_size,
@@ -237,22 +361,41 @@ def make_dataloaders(
 
 
 def mean_pool(last_hidden_state: Any, attention_mask: Any) -> Any:
+    """Average a sequence of token embeddings, ignoring padding positions.
+
+    last_hidden_state: (batch, tokens, hidden) embeddings. attention_mask: (batch,
+    tokens) mask marking the real tokens.\\
+    Returns one (batch, hidden) pooled vector per example. The token count is
+    clamped to at least 1 to avoid dividing by zero on fully padded rows.
+    """
+    # broadcast the mask over the hidden dimension so padding contributes nothing
     mask = attention_mask.unsqueeze(-1).to(last_hidden_state.dtype)
     pooled = (last_hidden_state * mask).sum(dim=1)
+    # clamp guards against a divide-by-zero on an all-padding row
     token_counts = mask.sum(dim=1).clamp(min=1.0)
     return pooled / token_counts
 
 
 def forward_logits(backbone: Any, head: Any, batch: dict[str, Any], device: Any) -> Any:
+    """Run a batch through the backbone and head to produce one logit per example.
+
+    backbone: the frozen or trainable encoder. head: the classification head.
+    batch: tokenized inputs with input_ids and attention_mask. device: target device.\\
+    Returns a 1-D tensor of logits, one per example.
+    """
     input_ids = batch["input_ids"].to(device)
     attention_mask = batch["attention_mask"].to(device)
+    # ask for hidden states because we pool them rather than use the LM head
     outputs = backbone(
         input_ids=input_ids,
         attention_mask=attention_mask,
         output_hidden_states=True,
     )
+    # pool the final layer into one vector per example
     pooled = mean_pool(outputs.hidden_states[-1], attention_mask)
+    # match the head's dtype in case the backbone runs in half precision
     pooled = pooled.to(next(head.parameters()).dtype)
+    # squeeze drops the trailing size-1 dimension so logits are 1-D
     return head(pooled).squeeze(-1)
 
 
@@ -265,6 +408,14 @@ def train_one_epoch(
     device: Any,
     train_backbone: bool,
 ) -> float:
+    """Train the head (and optionally the backbone) for a single pass over the data.
+
+    backbone / head: the model parts. dataloader: batches to train on. optimizer /
+    loss_fn: the optimization pieces. device: target device. train_backbone: whether
+    the backbone runs in train mode.\\
+    Returns the example-weighted average training loss for the epoch.
+    """
+    # the backbone only enters train mode when it is actually being fine-tuned
     backbone.train(mode=train_backbone)
     head.train()
     total_loss = 0.0
@@ -278,6 +429,7 @@ def train_one_epoch(
         loss.backward()
         optimizer.step()
 
+        # weight each batch's loss by its size so the epoch average is exact
         batch_size = labels.shape[0]
         total_loss += loss.item() * batch_size
         total_examples += batch_size
@@ -293,17 +445,25 @@ def evaluate_loss(
     device: Any,
     torch: Any,
 ) -> float:
+    """Compute the average loss over a dataloader without updating any weights.
+
+    backbone / head: the model parts. dataloader: batches to score. loss_fn: the
+    loss to average. device: target device. torch: the injected torch module.\\
+    Returns the example-weighted average loss, computed under no_grad in eval mode.
+    """
     backbone.eval()
     head.eval()
     total_loss = 0.0
     total_examples = 0
 
+    # no_grad avoids building the autograd graph during evaluation
     with torch.no_grad():
         for batch in dataloader:
             labels = batch["labels"].to(device)
             logits = forward_logits(backbone, head, batch, device)
             loss = loss_fn(logits.float(), labels.float())
 
+            # weight each batch's loss by its size so the average is exact
             batch_size = labels.shape[0]
             total_loss += loss.item() * batch_size
             total_examples += batch_size
@@ -318,22 +478,38 @@ def predict(
     device: Any,
     torch: Any,
 ) -> tuple[list[str], list[float]]:
+    """Run inference over a dataloader and return hard labels and positive scores.
+
+    backbone / head: the model parts. dataloader: batches to score. device: target
+    device. torch: the injected torch module.\\
+    Returns (y_pred, y_score) where y_score holds sigmoid probabilities and y_pred
+    holds the positive label or "no" thresholded at 0.5.
+    """
     backbone.eval()
     head.eval()
     y_pred = []
     y_score = []
 
+    # inference needs no gradients, so run it under no_grad
     with torch.no_grad():
         for batch in dataloader:
             logits = forward_logits(backbone, head, batch, device)
+            # turn logits into positive-class probabilities on the cpu
             scores = torch.sigmoid(logits.float()).detach().cpu().tolist()
             y_score.extend(scores)
+            # threshold at 0.5 to get a hard label per example
             y_pred.extend(POSITIVE_LABEL if score >= 0.5 else "no" for score in scores)
 
     return y_pred, y_score
 
 
 def copy_state_dict_to_cpu(module: Any) -> dict[str, Any]:
+    """Snapshot a module's parameters as detached CPU tensors.
+
+    module: the module whose state_dict to copy.\\
+    Returns a new state dict with every tensor detached, moved to CPU, and cloned so
+    later training steps cannot mutate the saved copy.
+    """
     return {
         key: value.detach().cpu().clone()
         for key, value in module.state_dict().items()
@@ -341,6 +517,12 @@ def copy_state_dict_to_cpu(module: Any) -> dict[str, Any]:
 
 
 def count_parameters(module: Any, trainable_only: bool = False) -> int:
+    """Count the parameters in a module.
+
+    module: the module to inspect. trainable_only: when True count only parameters
+    that require gradients.\\
+    Returns the total number of (optionally trainable) parameter elements.
+    """
     return sum(
         parameter.numel()
         for parameter in module.parameters()
@@ -349,6 +531,11 @@ def count_parameters(module: Any, trainable_only: bool = False) -> int:
 
 
 def output_dir_for(args: Any) -> Path:
+    """Build the artifact output directory for a run.
+
+    args: namespace holding artifacts_dir and model_name.\\
+    Returns the artifacts_dir / model_name path. Does not create the directory.
+    """
     return args.artifacts_dir / args.model_name
 
 
@@ -364,6 +551,17 @@ def train_frozen_head_grid_search(
     checkpoint_path: Path,
     checkpoint_metadata: dict[str, Any],
 ) -> dict[str, Any]:
+    """Grid-search learning rates while training a linear head on a frozen backbone.
+
+    model_factory: builds a fresh backbone per learning rate. nn / torch: injected
+    deps. train_loader / val_loader: training and validation batches. args: training
+    config. device: target device. learning_rates: the rates to try. checkpoint_path
+    and checkpoint_metadata: where and what to save for the best run.\\
+    Returns a dict with the final backbone and head (restored to the best validation
+    state), the best val loss and its learning rate/epoch/hidden size, and the full
+    per-epoch training history. Raises ValueError if no learning rate was run.
+    """
+    # track the best run seen across every learning rate
     best_val_loss = float("inf")
     best_head_state = None
     best_learning_rate = None
@@ -375,14 +573,17 @@ def train_frozen_head_grid_search(
     loss_fn = nn.BCEWithLogitsLoss()
 
     for learning_rate in learning_rates:
+        # reseed so every learning rate trains from an identical starting point
         set_seed(args.seed, torch)
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+        # a fresh frozen backbone per run, only the head is trained
         backbone = model_factory()
         backbone.eval()
         freeze_module(backbone)
 
+        # a single linear layer maps the pooled embedding to one logit
         hidden_size = backbone.config.hidden_size
         head = nn.Linear(hidden_size, 1).to(device)
         optimizer = torch.optim.AdamW(
@@ -411,12 +612,14 @@ def train_frozen_head_grid_search(
                 }
             )
 
+            # keep the best head by validation loss across all runs and epochs
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_learning_rate = learning_rate
                 best_epoch = epoch
                 best_hidden_size = hidden_size
                 best_head_state = copy_state_dict_to_cpu(head)
+                # persist the best checkpoint to disk when exports are enabled
                 if args.export_metrics:
                     torch.save(
                         {
@@ -435,13 +638,16 @@ def train_frozen_head_grid_search(
                 f"train_loss={train_loss:.4f} val_loss={val_loss:.4f}"
             )
 
+        # remember the last run's parts to return after restoring the best head
         final_backbone = backbone
         final_head = head
 
     if final_backbone is None or final_head is None:
         raise ValueError("No learning-rate runs were executed")
+    # restore the head to the best-scoring state seen during the search
     if best_head_state is not None:
         final_head.load_state_dict(best_head_state)
+    # prefer the on-disk checkpoint when it exists so the export and return value agree
     if args.export_metrics and checkpoint_path.exists():
         checkpoint = torch.load(checkpoint_path, map_location=device)
         final_head.load_state_dict(checkpoint["head_state_dict"])

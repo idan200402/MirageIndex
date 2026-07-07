@@ -69,6 +69,7 @@ class TfidfVectorizer:
             raise ValueError("min_df must be greater than 0")
         self.max_features = max_features
         self.min_df = min_df
+        # vocabulary and idf stay empty until fit learns them from a corpus
         self.vocabulary: dict[str, int] = {}
         self.idf: list[float] = []
 
@@ -85,19 +86,24 @@ class TfidfVectorizer:
         document_frequency: Counter[str] = Counter()
         term_frequency: Counter[str] = Counter()
 
+        # tally total occurrences and per-document presence for every token
         for text in texts:
             tokens = tokenize(text)
             term_frequency.update(tokens)
+            # a set so each token contributes once per document
             document_frequency.update(set(tokens))
 
+        # keep the most frequent terms that clear min_df, capped at max_features
         terms = [
             term
             for term, frequency in term_frequency.most_common()
             if document_frequency[term] >= self.min_df
         ][: self.max_features]
 
+        # assign each surviving term a stable column index
         self.vocabulary = {term: index for index, term in enumerate(terms)}
         document_count = len(texts)
+        # smoothed inverse document frequency so no term gets a zero or undefined weight
         self.idf = [
             math.log((1 + document_count) / (1 + document_frequency[term])) + 1
             for term in terms
@@ -118,6 +124,7 @@ class TfidfVectorizer:
 
         vectors = []
         for text in texts:
+            # count only the tokens that made it into the vocabulary
             counts: Counter[int] = Counter()
             for token in tokenize(text):
                 index = self.vocabulary.get(token)
@@ -127,9 +134,11 @@ class TfidfVectorizer:
             total_terms = sum(counts.values())
             vector = {}
             if total_terms:
+                # weight each term by its term frequency times its idf
                 for index, count in counts.items():
                     vector[index] = (count / total_terms) * self.idf[index]
 
+                # l2-normalize so document length does not dominate the vector
                 norm = math.sqrt(sum(value * value for value in vector.values()))
                 if norm:
                     vector = {index: value / norm for index, value in vector.items()}
