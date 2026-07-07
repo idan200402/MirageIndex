@@ -30,7 +30,7 @@ python source\model_training\tfidf_logistic_regression.py --export-metrics True
 python source\model_training\tfidf_random_forest.py --export-metrics True
 python source\model_training\tfidf_xgboost.py --export-metrics True
 python source\model_training\encoder_head.py --export-metrics True
-python source\model_training\LLM_LoRA.py --export-mertics True
+python source\model_training\LLM_LoRA.py --export-metrics True
 python source\model_training\LLM_train_head.py --export-metrics True
 python source\utils\plot_stats.py
 ```
