@@ -1,11 +1,20 @@
+# standard library imports
 import argparse
 from pathlib import Path
 import math
 
+# utility function imports
 from source.utils.training_metrics import parse_bool
+# utility constant imports
 from source.utils.data import DEFAULT_DATA_PATH, DEFAULT_ARTIFACTS_DIR, DEFAULT_SEED, DEFAULT_TEST_SIZE
 
 def add_common_parsing(parser: argparse.ArgumentParser ) -> argparse.ArgumentParser:
+    """Attach the command-line arguments shared by every model onto a parser.
+
+    parser: an argparse.ArgumentParser to extend in place.\\
+    Adds the dataset path, seed, test-size, metric-export flag, and artifacts
+    directory options, then returns the same parser so calls can be chained.
+    """
     # parsers relating to general model interactions
     parser.add_argument(
         "--data",
@@ -38,7 +47,15 @@ def add_common_parsing(parser: argparse.ArgumentParser ) -> argparse.ArgumentPar
     return parser
 
 def sigmoid(value: float) -> float:
+    """Map a real-valued margin to a probability in the open interval (0, 1).
+
+    value: the raw logit or margin to squash.\\
+    Returns the logistic sigmoid of value, computed in a numerically stable way
+    that avoids overflow for large-magnitude inputs.
+    """
+    # for non-negative inputs the standard form keeps exp arguments non-positive
     if value >= 0:
         return 1 / (1 + math.exp(-value))
+    # for negative inputs use the equivalent form so exp never overflows
     exp_value = math.exp(value)
     return exp_value / (1 + exp_value)

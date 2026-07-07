@@ -7,6 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
+# shared LLM training utility function and constant imports
 from source.utils.LLM_train import (
     DEFAULT_MODERNBERT_MODEL,
     add_learning_rate_grid_arg,
@@ -27,22 +28,35 @@ from source.utils.LLM_train import (
     train_frozen_head_grid_search,
     validate_llm_args,
 )
+
+# utility function and constant imports
 from source.utils.data import LABEL_FIELD, print_label_distribution
 from source.utils.general import add_common_parsing
 from source.utils.text import POSITIVE_LABEL, TEXT_FIELDS
-from source.utils.training_metrics import classification_metrics, export_metrics_json
+from source.utils.training_metrics import classification_metrics, export_metrics_json, project_relative_path
 
 
+# file specific constants
 MODEL_NAME = "encoder_head"
+# default grid of learning rates swept during the frozen-head grid search
 DEFAULT_LEARNING_RATES = "1e-3,1e-4,1e-5"
 
 
 def parse_args() -> argparse.Namespace:
+    """Build the command-line argument parser and return the parsed arguments.
+
+    Combines the arguments shared by every model with the LLM training options for a
+    frozen ModernBERT encoder, swapping the single learning rate for a learning rate
+    grid. Returns the populated argparse.Namespace.
+    """
     parser = argparse.ArgumentParser(
         description="Train a binary classification head on frozen ModernBERT encoder hidden states."
     )
+    # parsers that are general to all models
     parser = add_common_parsing(parser)
+    # this model always uses a fixed seed and exports metrics by default
     parser.set_defaults(seed=42, export_metrics=True)
+    # parsers shared by every LLM based training script, pointed at the ModernBERT family
     parser = add_llm_training_args(
         parser,
         MODEL_NAME,
@@ -51,25 +65,44 @@ def parse_args() -> argparse.Namespace:
         include_learning_rate=False,
     )
     parser.set_defaults(epochs=8)
+    # a grid of learning rates replaces the single learning rate argument
     parser = add_learning_rate_grid_arg(parser, DEFAULT_LEARNING_RATES)
     return parser.parse_args()
 
 
 def validate_encoder_args(args: argparse.Namespace) -> None:
+    """Validate the parsed arguments for the encoder head training run.
+
+    args: the parsed argparse.Namespace to check.\\
+    Runs the shared LLM argument checks and additionally requires at least one
+    learning rate in the grid. Returns nothing and raises ValueError on invalid input.
+    """
     validate_llm_args(args)
+    # the grid search needs at least one learning rate to try
     if not parse_learning_rates(args.learning_rates):
         raise ValueError("learning_rates must contain at least one learning rate")
 
 
 def main() -> None:
+    """Run the end-to-end training and evaluation pipeline for the frozen encoder head.
+
+    Loads and splits the dataset, tokenizes it, and runs a learning rate grid search
+    that trains a linear head on top of the frozen ModernBERT encoder, keeping the head
+    with the lowest validation loss. Evaluates the best head on the held-out test split,
+    optionally exports the metrics JSON and head weights, and prints a summary.\\
+    Takes no arguments and returns nothing.
+    """
     args = parse_args()
     validate_encoder_args(args)
+    # torch and encoder transformers are imported lazily so missing dependencies fail clearly
     torch, nn, DataLoader, Dataset, AutoModel, AutoTokenizer = require_torch_and_encoder_transformers(MODEL_NAME)
     set_seed(args.seed, torch)
     device = select_device(args.device, torch)
     dtype = select_dtype(args.torch_dtype, device, torch)
+    # the learning rate grid to sweep during the search
     learning_rates = parse_learning_rates(args.learning_rates)
 
+    # split the raw records into train, validation and test partitions
     encoder_train_records, val_records, test_records = split_llm_records(args)
 
     tokenizer = prepare_tokenizer(args.base_model, AutoTokenizer)
@@ -90,8 +123,15 @@ def main() -> None:
     best_head_path = output_dir / "best_encoder_head.pt"
 
     def make_backbone() -> object:
+        """Load and return a fresh frozen ModernBERT encoder backbone.
+
+        Takes no arguments. Returns a newly loaded backbone placed on the selected
+        device with the selected dtype, so the grid search can start each learning
+        rate from a clean model.
+        """
         return load_backbone(args.base_model, dtype, device, AutoModel)
 
+    # sweep the learning rate grid and keep the head with the lowest validation loss
     search_result = train_frozen_head_grid_search(
         model_factory=make_backbone,
         nn=nn,
@@ -110,14 +150,17 @@ def main() -> None:
         },
     )
 
+    # unpack the best backbone, head and bookkeeping produced by the grid search
     backbone = search_result["backbone"]
     head = search_result["head"]
     best_val_loss = search_result["best_val_loss"]
     best_learning_rate = search_result["best_learning_rate"]
     best_epoch = search_result["best_epoch"]
+    # fall back to the backbone config when the search did not report a hidden size
     hidden_size = search_result["hidden_size"] or backbone.config.hidden_size
     training_history = search_result["training_history"]
 
+    # evaluate the best head on the held-out test split
     y_true = [record[LABEL_FIELD] for record in test_records]
     y_pred, y_score = predict(backbone, head, test_loader, device, torch)
     metrics = classification_metrics(y_true=y_true, y_pred=y_pred, y_score=y_score, positive_label=POSITIVE_LABEL)
@@ -125,10 +168,11 @@ def main() -> None:
     test_loss = evaluate_loss(backbone, head, test_loader, loss_fn, device, torch)
     correct = sum(actual == predicted for actual, predicted in zip(y_true, y_pred))
 
+    # gather the run configuration, trained parameters and metrics into one exportable payload
     metrics_payload = {
         "model_name": args.model_name,
         "base_model": args.base_model,
-        "data_path": str(args.data),
+        "data_path": project_relative_path(args.data),
         "seed": args.seed,
         "test_size": args.test_size,
         "val_size": args.val_size,
@@ -141,7 +185,7 @@ def main() -> None:
         "test_loss": test_loss,
         "training_history": training_history,
         "artifacts": {
-            "best_head_weights": str(best_head_path) if args.export_metrics else None,
+            "best_head_weights": project_relative_path(best_head_path) if args.export_metrics else None,
         },
         "trained_parameters": {
             "frozen_encoder": args.base_model,
@@ -164,6 +208,7 @@ def main() -> None:
         "metrics": metrics,
     }
 
+    # only write the metrics JSON to disk when exporting is enabled
     metrics_path = None
     if args.export_metrics:
         metrics_path = export_metrics_json(
@@ -172,6 +217,7 @@ def main() -> None:
             artifacts_dir=args.artifacts_dir,
         )
 
+    # print a human-readable summary of the run and its evaluation metrics
     print("ModernBERT Frozen Encoder + Trainable Head")
     print("------------------------------------------")
     print(f"base_model: {args.base_model}")

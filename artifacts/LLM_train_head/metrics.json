@@ -1,10 +1,10 @@
 {
   "artifacts": {
-    "best_head_weights": "C:\\Users\\USER\\PycharmProjects\\MirageIndex\\artifacts\\LLM_train_head\\best_head.pt"
+    "best_head_weights": "artifacts/LLM_train_head/best_head.pt"
   },
   "base_model": "Qwen/Qwen3-0.6B",
   "best_val_loss": 0.399726729783205,
-  "data_path": "C:\\Users\\USER\\PycharmProjects\\MirageIndex\\data\\general_data.json",
+  "data_path": "data/general_data.json",
   "metrics": {
     "accuracy": 0.779134295227525,
     "pr_auc": 0.3614332153101676,

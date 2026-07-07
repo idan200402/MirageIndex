@@ -1,11 +1,11 @@
 {
   "artifacts": {
-    "best_lora_head_weights": "C:\\Users\\USER\\PycharmProjects\\MirageIndex\\artifacts\\LLM_LoRA\\best_lora_head.pt"
+    "best_lora_head_weights": "artifacts/LLM_LoRA/best_lora_head.pt"
   },
   "base_model": "Qwen/Qwen3-0.6B",
   "best_learning_rate": 1e-05,
   "best_val_loss": 0.36509498172593347,
-  "data_path": "C:\\Users\\USER\\PycharmProjects\\MirageIndex\\data\\general_data.json",
+  "data_path": "data/general_data.json",
   "metrics": {
     "accuracy": 0.8035516093229744,
     "pr_auc": 0.3670770179673293,

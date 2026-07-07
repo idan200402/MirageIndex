@@ -1,5 +1,5 @@
 {
-  "data_path": "C:\\Users\\USER\\PycharmProjects\\MirageIndex\\data\\general_data.json",
+  "data_path": "data/general_data.json",
   "metrics": {
     "accuracy": 0.7902330743618202,
     "pr_auc": 0.3459073039904701,

@@ -9,6 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
+# shared LLM training utility function imports
 from source.utils.LLM_train import (
     add_learning_rate_grid_arg,
     add_llm_training_args,
@@ -29,28 +30,43 @@ from source.utils.LLM_train import (
     train_one_epoch,
     validate_llm_args,
 )
+
+# utility function and constant imports
 from source.utils.data import LABEL_FIELD, print_label_distribution
 from source.utils.general import add_common_parsing
 from source.utils.text import POSITIVE_LABEL, TEXT_FIELDS
-from source.utils.training_metrics import classification_metrics, export_metrics_json
+from source.utils.training_metrics import classification_metrics, export_metrics_json, project_relative_path
 
 
+# file specific constants
 MODEL_NAME = "LLM_LoRA"
+# attention projection modules wrapped with LoRA adapters by default
 DEFAULT_LORA_TARGET_MODULES = "q_proj,k_proj,v_proj,o_proj"
+# default learning rate grid swept during training
 DEFAULT_LEARNING_RATES = "1e-5"
 
 
 def parse_args() -> argparse.Namespace:
+    """Build the command-line argument parser and return the parsed arguments.
+
+    Combines the arguments shared by every model with the LLM training options and the
+    LoRA specific hyperparameters (rank, alpha, dropout, target modules, learning rate
+    grid). Returns the populated argparse.Namespace.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Train a binary classification head plus LoRA adapters on Qwen attention "
             "projection modules."
         )
     )
+    # parsers that are general to all models
     parser = add_common_parsing(parser)
+    # this model always uses a fixed seed and exports metrics by default
     parser.set_defaults(seed=42, export_metrics=True)
+    # parsers shared by every LLM based training script
     parser = add_llm_training_args(parser, MODEL_NAME, include_learning_rate=False)
     parser.set_defaults(epochs=15)
+    # parsers relating specifically to the LoRA adapters
     parser.add_argument("--lora-r", type=int, default=8, help="LoRA adapter rank.")
     parser.add_argument("--lora-alpha", type=float, default=16.0, help="LoRA adapter scaling alpha.")
     parser.add_argument("--lora-dropout", type=float, default=0.05, help="Dropout before LoRA adapters.")
@@ -59,16 +75,25 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_LORA_TARGET_MODULES,
         help="Comma-separated attention projection module names to wrap with LoRA adapters.",
     )
+    # a grid of learning rates replaces the single learning rate argument
     parser = add_learning_rate_grid_arg(parser, DEFAULT_LEARNING_RATES)
     return parser.parse_args()
 
 
 def validate_lora_args(args: argparse.Namespace) -> None:
+    """Validate the parsed arguments for the LoRA training run.
+
+    args: the parsed argparse.Namespace to check.\\
+    Runs the shared LLM argument checks and additionally requires valid LoRA
+    hyperparameters, at least one target module and at least one learning rate.
+    Returns nothing and raises ValueError on invalid input.
+    """
     validate_llm_args(args)
     if args.lora_r <= 0:
         raise ValueError("lora_r must be greater than 0")
     if args.lora_alpha <= 0:
         raise ValueError("lora_alpha must be greater than 0")
+    # dropout is a probability so it must sit in the half-open interval [0, 1)
     if not 0 <= args.lora_dropout < 1:
         raise ValueError("lora_dropout must be in [0, 1)")
     if not parse_target_modules(args.lora_target_modules):
@@ -78,22 +103,38 @@ def validate_lora_args(args: argparse.Namespace) -> None:
 
 
 def parse_target_modules(value: str) -> tuple[str, ...]:
+    """Split a comma-separated module list into a clean tuple of module names.
+
+    value: the raw comma-separated string of target module names.\\
+    Returns a tuple of the trimmed, non-empty module names in their original order.
+    """
+    # trim each entry and drop any empty pieces left by stray commas
     return tuple(module_name.strip() for module_name in value.split(",") if module_name.strip())
 
 
 def make_lora_linear_class(nn: Any, torch: Any) -> Any:
+    """Build and return a LoRALinear class bound to the given torch and nn modules.
+
+    nn / torch: the lazily imported torch.nn and torch modules.\\
+    Returns a LoRALinear class that wraps a frozen linear layer with a trainable
+    low-rank adapter. The class is created inside this function so it can close over
+    the imported modules without importing torch at module load time.
+    """
     class LoRALinear(nn.Module):
         def __init__(self, base_layer: Any, rank: int, alpha: float, dropout: float) -> None:
             super().__init__()
             self.base_layer = base_layer
             self.rank = rank
             self.alpha = alpha
+            # the low-rank update is scaled by alpha / rank before being added back
             self.scaling = alpha / rank
             self.dropout = nn.Dropout(dropout)
 
+            # the wrapped layer stays frozen so only the adapter is trained
             for parameter in self.base_layer.parameters():
                 parameter.requires_grad = False
 
+            # lora_a projects the input down to the low-rank space
             self.lora_a = nn.Parameter(
                 torch.empty(
                     rank,
@@ -102,6 +143,7 @@ def make_lora_linear_class(nn: Any, torch: Any) -> Any:
                     dtype=torch.float32,
                 )
             )
+            # lora_b projects back up to the output space and starts at zero
             self.lora_b = nn.Parameter(
                 torch.zeros(
                     base_layer.out_features,
@@ -110,12 +152,16 @@ def make_lora_linear_class(nn: Any, torch: Any) -> Any:
                     dtype=torch.float32,
                 )
             )
+            # lora_b starts at zero so the adapter is a no-op until lora_a is initialized
             nn.init.kaiming_uniform_(self.lora_a, a=math.sqrt(5))
 
         def forward(self, inputs: Any) -> Any:
+            # the frozen base layer produces the original output
             base_output = self.base_layer(inputs)
+            # the low-rank branch runs in float32 through dropout, down then up projection
             lora_input = self.dropout(inputs).to(self.lora_a.dtype)
             lora_output = lora_input.matmul(self.lora_a.t()).matmul(self.lora_b.t()) * self.scaling
+            # add the scaled adapter output back in the base layer's dtype
             return base_output + lora_output.to(base_output.dtype)
 
     return LoRALinear
@@ -130,17 +176,29 @@ def add_lora_to_attention_modules(
     alpha: float,
     dropout: float,
 ) -> list[str]:
+    """Wrap every targeted attention projection layer in the backbone with a LoRA adapter.
+
+    backbone: the frozen model whose attention projections are adapted in place.
+    target_modules: names of the child linear layers to wrap (for example q_proj, v_proj).
+    rank / alpha / dropout: LoRA hyperparameters passed to each adapter.\\
+    Returns the list of fully qualified module names that were replaced, and raises
+    ValueError when none of the requested targets are found.
+    """
     LoRALinear = make_lora_linear_class(nn, torch)
     replaced_modules = []
 
+    # walk every module and swap in an adapter for each targeted linear child
     for module_name, module in list(backbone.named_modules()):
         for child_name, child in list(module.named_children()):
+            # only wrap children whose name is targeted and that are linear layers
             if child_name not in target_modules or not isinstance(child, nn.Linear):
                 continue
             setattr(module, child_name, LoRALinear(child, rank, alpha, dropout))
+            # record the fully qualified name of the replaced module
             replaced_name = f"{module_name}.{child_name}" if module_name else child_name
             replaced_modules.append(replaced_name)
 
+    # a run with no replacements means the target names never matched, so fail loudly
     if not replaced_modules:
         raise ValueError(
             "No target attention modules were found. "
@@ -151,11 +209,19 @@ def add_lora_to_attention_modules(
 
 
 def trainable_state_dict(module: Any) -> dict[str, Any]:
+    """Return a CPU copy of only the trainable tensors in a module's state dict.
+
+    module: the module whose parameters are inspected.\\
+    Returns a state dict containing just the entries whose parameters require gradients,
+    detached and cloned onto the CPU so they can be stored without holding device memory.
+    """
+    # collect the names of parameters that are actually being trained
     trainable_parameter_names = {
         name
         for name, parameter in module.named_parameters()
         if parameter.requires_grad
     }
+    # keep only those tensors, moved to the CPU as independent copies
     return {
         name: value.detach().cpu().clone()
         for name, value in module.state_dict().items()
@@ -164,12 +230,24 @@ def trainable_state_dict(module: Any) -> dict[str, Any]:
 
 
 def load_partial_state_dict(module: Any, partial_state_dict: dict[str, Any]) -> None:
+    """Load a subset of parameters into a module without disturbing the rest.
+
+    module: the module to update in place.
+    partial_state_dict: a mapping of parameter names to values, typically the trainable
+    subset produced by trainable_state_dict. Returns nothing.
+    """
+    # merge the partial values over the current state, then load the combined dict
     state_dict = module.state_dict()
     state_dict.update(partial_state_dict)
     module.load_state_dict(state_dict)
 
 
 def trainable_parameters(backbone: Any, head: Any) -> list[Any]:
+    """Collect every parameter from the backbone and head that requires gradients.
+
+    backbone / head: the two modules whose parameters are combined.\\
+    Returns a flat list of the trainable parameters, ready to hand to an optimizer.
+    """
     return [
         parameter
         for parameter in list(backbone.parameters()) + list(head.parameters())
@@ -178,15 +256,27 @@ def trainable_parameters(backbone: Any, head: Any) -> list[Any]:
 
 
 def main() -> None:
+    """Run the end-to-end training and evaluation pipeline for the LoRA adapters plus head.
+
+    Loads and splits the dataset, tokenizes it, and for each learning rate reloads a frozen
+    Qwen backbone, wraps its attention projections with LoRA adapters, and trains the adapters
+    together with a linear head while tracking the best validation loss. Evaluates the best
+    configuration on the held-out test split, optionally exports the metrics JSON and weights,
+    and prints a summary.\\
+    Takes no arguments and returns nothing.
+    """
     args = parse_args()
     validate_lora_args(args)
+    # torch and transformers are imported lazily so missing dependencies fail clearly
     torch, nn, DataLoader, Dataset, AutoModelForCausalLM, AutoTokenizer = require_torch_and_transformers(MODEL_NAME)
     set_seed(args.seed, torch)
     device = select_device(args.device, torch)
     dtype = select_dtype(args.torch_dtype, device, torch)
+    # the attention modules to adapt and the learning rate grid to sweep
     target_modules = parse_target_modules(args.lora_target_modules)
     learning_rates = parse_learning_rates(args.learning_rates)
 
+    # split the raw records into train, validation and test partitions
     lora_train_records, val_records, test_records = split_llm_records(args)
 
     tokenizer = prepare_tokenizer(args.base_model, AutoTokenizer)
@@ -206,6 +296,7 @@ def main() -> None:
     if args.export_metrics:
         output_dir.mkdir(parents=True, exist_ok=True)
     best_lora_path = output_dir / "best_lora_head.pt"
+    # track the best adapter and head configuration by validation loss across the grid
     best_val_loss = float("inf")
     best_head_state = None
     best_lora_state = None
@@ -217,10 +308,12 @@ def main() -> None:
     head = None
 
     for learning_rate in learning_rates:
+        # reset the seed so each learning rate starts from identical initial state
         set_seed(args.seed, torch)
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+        # reload a fresh frozen backbone and wrap its attention projections with adapters
         backbone = load_backbone(args.base_model, dtype, device, AutoModelForCausalLM)
         freeze_module(backbone)
         replaced_modules = add_lora_to_attention_modules(
@@ -233,8 +326,10 @@ def main() -> None:
             dropout=args.lora_dropout,
         )
 
+        # a single linear head maps the pooled hidden state to one logit
         hidden_size = backbone.config.hidden_size
         head = nn.Linear(hidden_size, 1).to(device)
+        # the optimizer only sees the LoRA adapter and head parameters, not the frozen weights
         optimizer = torch.optim.AdamW(
             trainable_parameters(backbone, head),
             lr=learning_rate,
@@ -242,6 +337,7 @@ def main() -> None:
         )
 
         for epoch in range(1, args.epochs + 1):
+            # train_backbone=True lets gradients flow into the LoRA adapters inside the backbone
             train_loss = train_one_epoch(
                 backbone,
                 head,
@@ -261,12 +357,14 @@ def main() -> None:
                 }
             )
 
+            # keep the head and adapter weights that reached the lowest validation loss so far
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_learning_rate = learning_rate
                 best_head_state = trainable_state_dict(head)
                 best_lora_state = trainable_state_dict(backbone)
                 if args.export_metrics:
+                    # persist the best head and adapter weights with the metadata needed to reload them
                     torch.save(
                         {
                             "head_state_dict": head.state_dict(),
@@ -293,27 +391,32 @@ def main() -> None:
                 f"train_loss={train_loss:.4f} val_loss={val_loss:.4f}"
             )
 
+    # restore the best in-memory head and adapter weights seen during the grid search
     if best_head_state is not None:
         load_partial_state_dict(head, best_head_state)
     if best_lora_state is not None:
         load_partial_state_dict(backbone, best_lora_state)
+    # prefer the exported checkpoint when metrics were exported to disk
     if args.export_metrics and best_lora_path.exists():
         checkpoint = torch.load(best_lora_path, map_location=device)
         head.load_state_dict(checkpoint["head_state_dict"])
         load_partial_state_dict(backbone, checkpoint["lora_state_dict"])
 
+    # evaluate the restored configuration on the held-out test split
     y_true = [record[LABEL_FIELD] for record in test_records]
     y_pred, y_score = predict(backbone, head, test_loader, device, torch)
     metrics = classification_metrics(y_true=y_true, y_pred=y_pred, y_score=y_score, positive_label=POSITIVE_LABEL)
     test_loss = evaluate_loss(backbone, head, test_loader, loss_fn, device, torch)
     correct = sum(actual == predicted for actual, predicted in zip(y_true, y_pred))
 
+    # count the adapter and head parameters that were actually trained
     trainable_backbone_parameters = count_parameters(backbone, trainable_only=True)
     trainable_head_parameters = count_parameters(head, trainable_only=True)
+    # gather the run configuration, trained parameters and metrics into one exportable payload
     metrics_payload = {
         "model_name": args.model_name,
         "base_model": args.base_model,
-        "data_path": str(args.data),
+        "data_path": project_relative_path(args.data),
         "seed": args.seed,
         "test_size": args.test_size,
         "val_size": args.val_size,
@@ -325,7 +428,7 @@ def main() -> None:
         "test_loss": test_loss,
         "training_history": training_history,
         "artifacts": {
-            "best_lora_head_weights": str(best_lora_path) if args.export_metrics else None,
+            "best_lora_head_weights": project_relative_path(best_lora_path) if args.export_metrics else None,
         },
         "trained_parameters": {
             "frozen_backbone": args.base_model,
@@ -354,6 +457,7 @@ def main() -> None:
         "metrics": metrics,
     }
 
+    # only write the metrics JSON to disk when exporting is enabled
     metrics_path = None
     if args.export_metrics:
         metrics_path = export_metrics_json(
@@ -362,6 +466,7 @@ def main() -> None:
             artifacts_dir=args.artifacts_dir,
         )
 
+    # print a human-readable summary of the run and its evaluation metrics
     print("Qwen LoRA Attention Adapters + Trainable Head")
     print("---------------------------------------------")
     print(f"base_model: {args.base_model}")

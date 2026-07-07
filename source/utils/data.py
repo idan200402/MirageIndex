@@ -31,26 +31,32 @@ def load_records(path: Path) -> list[dict[str, Any]]:
     """
     text = path.read_text(encoding="utf-8")
 
+    # first attempt to parse the whole file as a single JSON document
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
+        # the file was not valid JSON as a whole, so fall back to JSONL parsing
         records = []
         for line_number, line in enumerate(text.splitlines(), start=1):
+            # blank lines carry no record and are skipped
             if not line.strip():
                 continue
             try:
                 item = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"Invalid JSON on line {line_number}: {exc}") from exc
+            # every JSONL entry must decode to an object, not a scalar or list
             if not isinstance(item, dict):
                 raise ValueError(f"Expected an object on line {line_number}, got {type(item).__name__}")
             records.append(item)
         return records
 
+    # a top-level array is treated as the full list of records
     if isinstance(data, list):
         if not all(isinstance(item, dict) for item in data):
             raise ValueError("Expected every list item to be a JSON object")
         return data
+    # a single top-level object is wrapped into a one-element list
     if isinstance(data, dict):
         return [data]
 
@@ -81,9 +87,11 @@ def split_records(
     if len(records) < 2:
         raise ValueError("Need at least 2 records to split the dataset")
 
+    # shuffle a copy so the caller's original ordering is left untouched
     shuffled_records = records[:]
     random.Random(seed).shuffle(shuffled_records)
 
+    # always route at least one record to the test split
     test_count = max(1, round(len(shuffled_records) * test_size))
     test_records = shuffled_records[:test_count]
     train_records = shuffled_records[test_count:]
@@ -101,9 +109,12 @@ def print_label_distribution(title: str, records: list[dict[str, Any]]) -> None:
     Records missing the field are counted under "<missing>". Used to sanity-check
     that the train/test splits have a comparable class balance.
     """
+    # records missing the label are bucketed under a placeholder key
     label_counts = Counter(record.get(LABEL_FIELD, "<missing>") for record in records)
     print(f"\n{title}")
+    # underline the title with dashes matching its width
     print("-" * len(title))
     for label, count in label_counts.most_common():
+        # guard against division by zero when there are no records
         percentage = count / len(records) * 100 if records else 0.0
         print(f"{label}: {count} ({percentage:.2f}%)")
