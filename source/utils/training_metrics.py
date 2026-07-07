@@ -1,10 +1,30 @@
 import json
+import os
 from pathlib import Path
 from typing import Any, Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+
+
+def project_relative_path(path: str | Path) -> str:
+    """Convert a filesystem path into a portable, project-root-relative string.
+
+    path: an absolute or relative path to a dataset or artifact.\\
+    Returns the path relative to the project root using forward slashes, so the
+    value written into exported artifacts is identical on every machine and
+    operating system. Falls back to the absolute POSIX form only when the path
+    lives on a different drive and cannot be expressed relative to the root.
+    """
+    absolute_path = Path(path).resolve()
+    try:
+        relative_path = os.path.relpath(absolute_path, PROJECT_ROOT)
+    except ValueError:
+        # os.path.relpath raises on Windows when the paths sit on different drives
+        return absolute_path.as_posix()
+    # normalize to forward slashes so exported JSON is byte-identical across OSes
+    return Path(relative_path).as_posix()
 
 
 def parse_bool(value: bool | str) -> bool:
