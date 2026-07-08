@@ -1,11 +1,24 @@
 # standard library imports
+import math
 import random
+from collections import namedtuple
 from pathlib import Path
 from typing import Any, Callable
 
 # utility imports
 from source.utils.data import LABEL_FIELD, load_records, split_records
-from source.utils.text import POSITIVE_LABEL, record_to_text
+from source.utils.text import (
+    POSITIVE_LABEL,
+    build_chunk_examples,
+    build_train_chunk_examples,
+    record_to_text,
+)
+from source.utils.general import aggregate_document_score, document_label, group_scores_by_doc
+
+
+# a validation/test bundle for span-mode neural evaluation: a fixed-order chunk loader
+# plus the metadata needed to group chunk scores back to their parent documents
+SpanBundle = namedtuple("SpanBundle", ["chunk_loader", "chunk_spans", "doc_index", "n_docs", "doc_labels"])
 
 
 DEFAULT_QWEN_MODEL = "Qwen/Qwen3-0.6B"
@@ -648,6 +661,331 @@ def train_frozen_head_grid_search(
     if best_head_state is not None:
         final_head.load_state_dict(best_head_state)
     # prefer the on-disk checkpoint when it exists so the export and return value agree
+    if args.export_metrics and checkpoint_path.exists():
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        final_head.load_state_dict(checkpoint["head_state_dict"])
+
+    return {
+        "backbone": final_backbone,
+        "head": final_head,
+        "best_val_loss": best_val_loss,
+        "best_learning_rate": best_learning_rate,
+        "best_epoch": best_epoch,
+        "hidden_size": best_hidden_size,
+        "training_history": training_history,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Neural span-mode primitives (only used when --use-spans is set). The baseline
+# neural path above is untouched.
+# ---------------------------------------------------------------------------
+
+def make_span_dataset_class(torch: Any, Dataset: Any) -> Any:
+    """Build a torch Dataset subclass over pre-built (query, chunk, label) triples.
+
+    torch / Dataset: the injected torch module and base Dataset class.\\
+    Returns a SpanDataset class whose items expose the query, the chunk text, and the
+    float label. Eval bundles pass placeholder labels since evaluation never reads them.
+    """
+    class SpanDataset(Dataset):
+        def __init__(self, queries: list[str], chunks: list[str], labels: list[float]) -> None:
+            self.queries = queries
+            self.chunks = chunks
+            self.labels = labels
+
+        def __len__(self) -> int:
+            return len(self.queries)
+
+        def __getitem__(self, index: int) -> dict[str, Any]:
+            return {
+                "query": self.queries[index],
+                "chunk": self.chunks[index],
+                "label": torch.tensor(float(self.labels[index])),
+            }
+
+    return SpanDataset
+
+
+def make_span_collate_fn(tokenizer: Any, max_length: int, torch: Any) -> Any:
+    """Build a cross-encoder collate function for (query, chunk) batches.
+
+    tokenizer: the tokenizer to apply. max_length: truncation length. torch: the
+    injected torch module.\\
+    Returns a collate_fn that tokenizes each pair as [CLS] query [SEP] chunk [SEP]
+    (passing text and text_pair builds token_type_ids automatically) and attaches the
+    stacked float labels under the "labels" key, mirroring make_collate_fn.
+    """
+    def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
+        # text + text_pair makes the tokenizer emit the cross-encoder segment layout
+        encoded = tokenizer(
+            [item["query"] for item in batch],
+            [item["chunk"] for item in batch],
+            padding=True,
+            truncation=True,
+            max_length=max_length,
+            return_tensors="pt",
+        )
+        encoded["labels"] = torch.stack([item["label"] for item in batch]).float()
+        return encoded
+
+    return collate_fn
+
+
+def _build_span_eval_bundle(
+    records: list[dict[str, Any]],
+    dataset_class: Any,
+    collate_fn: Any,
+    args: Any,
+    DataLoader: Any,
+) -> SpanBundle:
+    """Build a fixed-order SpanBundle for validation/test span evaluation.
+
+    records: the split's records, in order. dataset_class / collate_fn: the span dataset
+    and collate function. args: supplies chunk config and batch size. DataLoader: injected.\\
+    Returns a SpanBundle with a non-shuffling chunk loader plus the chunk spans, doc
+    indices, doc count, and document labels needed to aggregate back to documents.
+    """
+    queries, chunks, chunk_spans, doc_index, n_docs = build_chunk_examples(
+        records, args.chunk_window, args.chunk_stride
+    )
+    # eval never reads labels, so placeholders keep the dataset shape uniform
+    chunk_loader = DataLoader(
+        dataset_class(queries, chunks, [0.0] * len(queries)),
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=collate_fn,
+    )
+    doc_labels = [record[LABEL_FIELD] for record in records]
+    bundle = SpanBundle(
+        chunk_loader=chunk_loader,
+        chunk_spans=chunk_spans,
+        doc_index=doc_index,
+        n_docs=n_docs,
+        doc_labels=doc_labels,
+    )
+    # DOC-TO-CHUNK ALIGNMENT INVARIANT checked at the bundle level
+    assert len(bundle.doc_labels) == bundle.n_docs
+    return bundle
+
+
+def make_span_dataloaders(
+    train_records: list[dict[str, Any]],
+    val_records: list[dict[str, Any]],
+    test_records: list[dict[str, Any]],
+    tokenizer: Any,
+    args: Any,
+    torch: Any,
+    DataLoader: Any,
+    Dataset: Any,
+) -> tuple[Any, SpanBundle, SpanBundle, list[int], dict[str, int]]:
+    """Wrap the three record splits into span-mode training and evaluation loaders.
+
+    train/val/test_records: the split datasets. tokenizer / args: supply the collate
+    config and batch size. torch, DataLoader, Dataset: injected deps.\\
+    Returns (train_loader, val_bundle, test_bundle, train_labels, build_audit). The train
+    loader shuffles over span-labeled chunks; the val/test bundles keep a fixed order so
+    chunk scores stay aligned to their spans and documents. train_labels and build_audit
+    feed pos_weight and the metrics payload respectively.
+    """
+    dataset_class = make_span_dataset_class(torch, Dataset)
+    collate_fn = make_span_collate_fn(tokenizer, args.max_length, torch)
+
+    # span-aware training chunks (the only place labels are formed)
+    train_queries, train_chunks, train_labels, build_audit = build_train_chunk_examples(
+        train_records, args.chunk_window, args.chunk_stride, args.overlap_threshold
+    )
+    train_loader = DataLoader(
+        dataset_class(train_queries, train_chunks, [float(label) for label in train_labels]),
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+    )
+
+    val_bundle = _build_span_eval_bundle(val_records, dataset_class, collate_fn, args, DataLoader)
+    test_bundle = _build_span_eval_bundle(test_records, dataset_class, collate_fn, args, DataLoader)
+    return train_loader, val_bundle, test_bundle, train_labels, build_audit
+
+
+def compute_pos_weight(train_labels: list[int], torch: Any, clamp: tuple[float, float] = (1.0, 20.0)) -> Any:
+    """Compute the BCEWithLogitsLoss pos_weight for the negative-skewed chunk labels.
+
+    train_labels: the 0/1 chunk labels. torch: the injected torch module. clamp: bounds
+    on the returned ratio.\\
+    Returns a torch tensor holding neg_count / max(pos_count, 1), clamped to [low, high].
+    """
+    neg_count = sum(1 for label in train_labels if label == 0)
+    pos_count = sum(1 for label in train_labels if label == 1)
+    ratio = neg_count / max(pos_count, 1)
+    ratio = min(clamp[1], max(clamp[0], ratio))
+    return torch.tensor(ratio)
+
+
+def predict_chunk_scores(backbone: Any, head: Any, chunk_loader: Any, device: Any, torch: Any) -> list[float]:
+    """Run chunk inference and return sigmoid positive-scores in loader order.
+
+    backbone / head: the model parts. chunk_loader: the fixed-order chunk batches.
+    device: target device. torch: the injected torch module.\\
+    Returns one score per chunk, aligned 1:1 with the bundle's chunk_spans/doc_index.
+    Runs under no_grad in eval mode; the loader must never shuffle or reorder.
+    """
+    backbone.eval()
+    head.eval()
+    scores: list[float] = []
+    with torch.no_grad():
+        for batch in chunk_loader:
+            logits = forward_logits(backbone, head, batch, device)
+            scores.extend(torch.sigmoid(logits.float()).detach().cpu().tolist())
+    return scores
+
+
+def document_bce(doc_scores: list[float], doc_labels: list[str], positive_label: str) -> float:
+    """Compute mean binary cross-entropy between aggregated doc scores and labels.
+
+    doc_scores: aggregated per-document positive scores. doc_labels: document labels.
+    positive_label: the label mapped to target 1.0.\\
+    Returns the mean BCE, with scores clamped away from 0/1 for numerical stability.
+    Provides a smooth model-selection objective when chunk labels are unavailable.
+    """
+    epsilon = 1e-7
+    total = 0.0
+    for score, label in zip(doc_scores, doc_labels):
+        target = 1.0 if label == positive_label else 0.0
+        clamped = min(1 - epsilon, max(epsilon, score))
+        total += -(target * math.log(clamped) + (1 - target) * math.log(1 - clamped))
+    return total / len(doc_scores)
+
+
+def evaluate_document_metrics(backbone: Any, head: Any, bundle: SpanBundle, args: Any, device: Any, torch: Any) -> dict[str, Any]:
+    """Score a span bundle at the chunk level and aggregate to document predictions.
+
+    backbone / head: the model parts. bundle: the SpanBundle to evaluate. args: supplies
+    the aggregation config. device / torch: injected deps.\\
+    Returns {"response_scores", "y_pred", "document_bce"}. Shared by both validation
+    (model selection by document_bce) and final test scoring (against document labels).
+    """
+    scores = predict_chunk_scores(backbone, head, bundle.chunk_loader, device, torch)
+    grouped_scores, grouped_spans = group_scores_by_doc(
+        scores, bundle.chunk_spans, bundle.doc_index, bundle.n_docs
+    )
+    response_scores = [
+        aggregate_document_score(chunk_scores, args.aggregation, args.top_k, chunk_spans=chunk_spans)
+        for chunk_scores, chunk_spans in zip(grouped_scores, grouped_spans)
+    ]
+    y_pred = [document_label(score, args.response_threshold, POSITIVE_LABEL) for score in response_scores]
+    return {
+        "response_scores": response_scores,
+        "y_pred": y_pred,
+        "document_bce": document_bce(response_scores, bundle.doc_labels, POSITIVE_LABEL),
+    }
+
+
+def train_frozen_head_grid_search_spans(
+    model_factory: Callable[[], Any],
+    nn: Any,
+    torch: Any,
+    train_loader: Any,
+    val_bundle: SpanBundle,
+    args: Any,
+    device: Any,
+    learning_rates: tuple[float, ...],
+    pos_weight: Any,
+    checkpoint_path: Path,
+    checkpoint_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Grid-search learning rates for a frozen-backbone head in span mode.
+
+    Mirrors train_frozen_head_grid_search but (a) uses a pos_weight-weighted
+    BCEWithLogitsLoss over the chunk train_loader, and (b) selects the best epoch/lr by
+    the LOWEST document_bce from evaluate_document_metrics on the validation bundle
+    instead of chunk validation loss. Saves the same checkpoint shape plus the chunk
+    metadata supplied in checkpoint_metadata.\\
+    Returns the same keys as the baseline grid search (best_val_loss holds the best
+    document_bce) so callers stay uniform. Raises ValueError if no learning rate ran.
+    """
+    # best_val_loss tracks the best (lowest) document_bce across all runs
+    best_val_loss = float("inf")
+    best_head_state = None
+    best_learning_rate = None
+    best_epoch = None
+    best_hidden_size = None
+    training_history = []
+    final_backbone = None
+    final_head = None
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    for learning_rate in learning_rates:
+        # reseed so every learning rate trains from an identical starting point
+        set_seed(args.seed, torch)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # a fresh frozen backbone per run, only the head is trained
+        backbone = model_factory()
+        backbone.eval()
+        freeze_module(backbone)
+
+        hidden_size = backbone.config.hidden_size
+        head = nn.Linear(hidden_size, 1).to(device)
+        optimizer = torch.optim.AdamW(
+            head.parameters(),
+            lr=learning_rate,
+            weight_decay=args.weight_decay,
+        )
+
+        for epoch in range(1, args.epochs + 1):
+            train_loss = train_one_epoch(
+                backbone,
+                head,
+                train_loader,
+                optimizer,
+                loss_fn,
+                device,
+                train_backbone=False,
+            )
+            # select on the same document-level aggregation used for the test metric
+            eval_result = evaluate_document_metrics(backbone, head, val_bundle, args, device, torch)
+            val_document_bce = eval_result["document_bce"]
+            training_history.append(
+                {
+                    "learning_rate": learning_rate,
+                    "epoch": epoch,
+                    "train_loss": train_loss,
+                    "val_document_bce": val_document_bce,
+                }
+            )
+
+            if val_document_bce < best_val_loss:
+                best_val_loss = val_document_bce
+                best_learning_rate = learning_rate
+                best_epoch = epoch
+                best_hidden_size = hidden_size
+                best_head_state = copy_state_dict_to_cpu(head)
+                if args.export_metrics:
+                    torch.save(
+                        {
+                            "head_state_dict": head.state_dict(),
+                            "hidden_size": hidden_size,
+                            "learning_rate": learning_rate,
+                            "epoch": epoch,
+                            "val_document_bce": val_document_bce,
+                            **checkpoint_metadata,
+                        },
+                        checkpoint_path,
+                    )
+
+            print(
+                f"lr {learning_rate:g} epoch {epoch}: "
+                f"train_loss={train_loss:.4f} val_document_bce={val_document_bce:.4f}"
+            )
+
+        final_backbone = backbone
+        final_head = head
+
+    if final_backbone is None or final_head is None:
+        raise ValueError("No learning-rate runs were executed")
+    if best_head_state is not None:
+        final_head.load_state_dict(best_head_state)
     if args.export_metrics and checkpoint_path.exists():
         checkpoint = torch.load(checkpoint_path, map_location=device)
         final_head.load_state_dict(checkpoint["head_state_dict"])

@@ -1,0 +1,130 @@
+{
+  "class_weight": 13.09060773480663,
+  "data_path": "data/general_data.json",
+  "metrics": {
+    "accuracy": 0.7758046614872364,
+    "pr_auc": 0.31416918981801195,
+    "precision": 0.379746835443038,
+    "recall": 0.16393442622950818,
+    "roc_auc": 0.6141832960409151
+  },
+  "model_name": "tfidf_logistic_regression_spans",
+  "seed": 42,
+  "span_config": {
+    "aggregation": "max",
+    "chunk_stride": 20,
+    "chunk_window": 40,
+    "overlap_threshold": 0.5,
+    "response_threshold": 0.5,
+    "top_k": 3
+  },
+  "span_coverage": {
+    "negative_chunks": 11847,
+    "positive_chunks": 905,
+    "yes_records_resolved": 567,
+    "yes_records_total": 632,
+    "yes_records_zero_spans": 65
+  },
+  "test_examples": 901,
+  "test_size": 0.2,
+  "train_examples": 3606,
+  "trained_parameters": {
+    "bias": -6.20875741932674,
+    "epochs": 80,
+    "l2": 0.0001,
+    "learning_rate": 0.5,
+    "max_features": 20000,
+    "min_df": 1,
+    "negative_label_terms": [
+      {
+        "term": "41",
+        "weight": -12.42106154981774
+      },
+      {
+        "term": "solving",
+        "weight": -9.23542320031261
+      },
+      {
+        "term": "engagement",
+        "weight": -9.126915979037319
+      },
+      {
+        "term": "store",
+        "weight": -9.009202138211666
+      },
+      {
+        "term": "intercept",
+        "weight": -8.89337511923944
+      },
+      {
+        "term": "varies",
+        "weight": -8.595960615088076
+      },
+      {
+        "term": "99",
+        "weight": -8.477123210718206
+      },
+      {
+        "term": "purchase",
+        "weight": -8.36220985981158
+      },
+      {
+        "term": "setting",
+        "weight": -8.330245144871027
+      },
+      {
+        "term": "unexpected",
+        "weight": -8.323607363038068
+      }
+    ],
+    "positive_label": "yes",
+    "positive_label_terms": [
+      {
+        "term": "interior",
+        "weight": 17.297567248121663
+      },
+      {
+        "term": "pairs",
+        "weight": 16.752843332195496
+      },
+      {
+        "term": "lake",
+        "weight": 14.869995934579412
+      },
+      {
+        "term": "details",
+        "weight": 14.408798615139418
+      },
+      {
+        "term": "resolution",
+        "weight": 14.284414824766202
+      },
+      {
+        "term": "verification",
+        "weight": 13.838456085970403
+      },
+      {
+        "term": "girlfriend",
+        "weight": 13.747479197900764
+      },
+      {
+        "term": "bouquet",
+        "weight": 13.677660230562532
+      },
+      {
+        "term": "370",
+        "weight": 13.131202769776463
+      },
+      {
+        "term": "exit",
+        "weight": 13.098632946521725
+      }
+    ],
+    "text_fields": [
+      "user_query",
+      "chatgpt_response"
+    ],
+    "vocabulary_size": 19745,
+    "weights_count": 19745
+  }
+}

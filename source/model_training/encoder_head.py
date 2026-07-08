@@ -12,10 +12,13 @@ from source.utils.LLM_train import (
     DEFAULT_MODERNBERT_MODEL,
     add_learning_rate_grid_arg,
     add_llm_training_args,
+    compute_pos_weight,
     count_parameters,
+    evaluate_document_metrics,
     evaluate_loss,
     load_backbone,
     make_dataloaders,
+    make_span_dataloaders,
     output_dir_for,
     parse_learning_rates,
     predict,
@@ -26,12 +29,13 @@ from source.utils.LLM_train import (
     set_seed,
     split_llm_records,
     train_frozen_head_grid_search,
+    train_frozen_head_grid_search_spans,
     validate_llm_args,
 )
 
 # utility function and constant imports
 from source.utils.data import LABEL_FIELD, print_label_distribution
-from source.utils.general import add_common_parsing
+from source.utils.general import add_common_parsing, spans_suffix, span_config_payload
 from source.utils.text import POSITIVE_LABEL, TEXT_FIELDS
 from source.utils.training_metrics import classification_metrics, export_metrics_json, project_relative_path
 
@@ -94,6 +98,8 @@ def main() -> None:
     """
     args = parse_args()
     validate_encoder_args(args)
+    # fork artifacts to encoder_head_spans in span mode; inert (suffix "") otherwise
+    args.model_name = args.model_name + spans_suffix(args)
     # torch and encoder transformers are imported lazily so missing dependencies fail clearly
     torch, nn, DataLoader, Dataset, AutoModel, AutoTokenizer = require_torch_and_encoder_transformers(MODEL_NAME)
     set_seed(args.seed, torch)
@@ -106,16 +112,6 @@ def main() -> None:
     encoder_train_records, val_records, test_records = split_llm_records(args)
 
     tokenizer = prepare_tokenizer(args.base_model, AutoTokenizer)
-    train_loader, val_loader, test_loader = make_dataloaders(
-        encoder_train_records,
-        val_records,
-        test_records,
-        tokenizer,
-        args,
-        torch,
-        DataLoader,
-        Dataset,
-    )
 
     output_dir = output_dir_for(args)
     if args.export_metrics:
@@ -131,24 +127,76 @@ def main() -> None:
         """
         return load_backbone(args.base_model, dtype, device, AutoModel)
 
-    # sweep the learning rate grid and keep the head with the lowest validation loss
-    search_result = train_frozen_head_grid_search(
-        model_factory=make_backbone,
-        nn=nn,
-        torch=torch,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        args=args,
-        device=device,
-        learning_rates=learning_rates,
-        checkpoint_path=best_head_path,
-        checkpoint_metadata={
-            "base_model": args.base_model,
-            "positive_label": POSITIVE_LABEL,
-            "text_fields": list(TEXT_FIELDS),
-            "max_length": args.max_length,
-        },
-    )
+    # the held-out document labels are the A/B comparison target in both modes
+    y_true = [record[LABEL_FIELD] for record in test_records]
+    build_audit = None
+
+    if args.use_spans:
+        # SPAN MODE: train the frozen-encoder head on (query, chunk) pairs and select by
+        # the document-level aggregation, mirroring the baseline grid search structure.
+        train_loader, val_bundle, test_bundle, train_labels, build_audit = make_span_dataloaders(
+            encoder_train_records,
+            val_records,
+            test_records,
+            tokenizer,
+            args,
+            torch,
+            DataLoader,
+            Dataset,
+        )
+        pos_weight = compute_pos_weight(train_labels, torch)
+        search_result = train_frozen_head_grid_search_spans(
+            model_factory=make_backbone,
+            nn=nn,
+            torch=torch,
+            train_loader=train_loader,
+            val_bundle=val_bundle,
+            args=args,
+            device=device,
+            learning_rates=learning_rates,
+            pos_weight=pos_weight,
+            checkpoint_path=best_head_path,
+            checkpoint_metadata={
+                "base_model": args.base_model,
+                "positive_label": POSITIVE_LABEL,
+                "text_fields": list(TEXT_FIELDS),
+                "max_length": args.max_length,
+                "chunk_window": args.chunk_window,
+                "chunk_stride": args.chunk_stride,
+                "overlap_threshold": args.overlap_threshold,
+                "aggregation": args.aggregation,
+                "top_k": args.top_k,
+            },
+        )
+    else:
+        train_loader, val_loader, test_loader = make_dataloaders(
+            encoder_train_records,
+            val_records,
+            test_records,
+            tokenizer,
+            args,
+            torch,
+            DataLoader,
+            Dataset,
+        )
+        # sweep the learning rate grid and keep the head with the lowest validation loss
+        search_result = train_frozen_head_grid_search(
+            model_factory=make_backbone,
+            nn=nn,
+            torch=torch,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            args=args,
+            device=device,
+            learning_rates=learning_rates,
+            checkpoint_path=best_head_path,
+            checkpoint_metadata={
+                "base_model": args.base_model,
+                "positive_label": POSITIVE_LABEL,
+                "text_fields": list(TEXT_FIELDS),
+                "max_length": args.max_length,
+            },
+        )
 
     # unpack the best backbone, head and bookkeeping produced by the grid search
     backbone = search_result["backbone"]
@@ -161,11 +209,18 @@ def main() -> None:
     training_history = search_result["training_history"]
 
     # evaluate the best head on the held-out test split
-    y_true = [record[LABEL_FIELD] for record in test_records]
-    y_pred, y_score = predict(backbone, head, test_loader, device, torch)
+    if args.use_spans:
+        # aggregate chunk scores to document predictions; document_bce stands in for test_loss
+        eval_result = evaluate_document_metrics(backbone, head, test_bundle, args, device, torch)
+        y_pred = eval_result["y_pred"]
+        y_score = eval_result["response_scores"]
+        test_loss = eval_result["document_bce"]
+    else:
+        y_pred, y_score = predict(backbone, head, test_loader, device, torch)
+        loss_fn = nn.BCEWithLogitsLoss()
+        test_loss = evaluate_loss(backbone, head, test_loader, loss_fn, device, torch)
+
     metrics = classification_metrics(y_true=y_true, y_pred=y_pred, y_score=y_score, positive_label=POSITIVE_LABEL)
-    loss_fn = nn.BCEWithLogitsLoss()
-    test_loss = evaluate_loss(backbone, head, test_loader, loss_fn, device, torch)
     correct = sum(actual == predicted for actual, predicted in zip(y_true, y_pred))
 
     # gather the run configuration, trained parameters and metrics into one exportable payload
@@ -207,6 +262,10 @@ def main() -> None:
         },
         "metrics": metrics,
     }
+    if args.use_spans:
+        # span-mode only additions; the baseline payload stays byte-identical
+        metrics_payload["span_config"] = span_config_payload(args)
+        metrics_payload["span_coverage"] = build_audit
 
     # only write the metrics JSON to disk when exporting is enabled
     metrics_path = None

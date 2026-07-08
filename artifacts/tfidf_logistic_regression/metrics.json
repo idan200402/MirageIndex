@@ -22,11 +22,11 @@
     "negative_label_terms": [
       {
         "term": "predict",
-        "weight": -7.136561645474705
+        "weight": -7.136561645474704
       },
       {
         "term": "base",
-        "weight": -6.621657560886716
+        "weight": -6.621657560886713
       },
       {
         "term": "value",
@@ -34,7 +34,7 @@
       },
       {
         "term": "shirt",
-        "weight": -5.57047690194827
+        "weight": -5.570476901948269
       },
       {
         "term": "t",
@@ -42,23 +42,23 @@
       },
       {
         "term": "unexpected",
-        "weight": -5.48161006537729
+        "weight": -5.481610065377289
       },
       {
         "term": "positive",
-        "weight": -5.456128837180228
+        "weight": -5.456128837180225
       },
       {
         "term": "called",
-        "weight": -5.305250195418901
+        "weight": -5.3052501954189
       },
       {
         "term": "challenges",
-        "weight": -5.294320702293242
+        "weight": -5.294320702293241
       },
       {
         "term": "read",
-        "weight": -5.245935803092147
+        "weight": -5.245935803092146
       }
     ],
     "positive_label": "yes",
@@ -69,35 +69,35 @@
       },
       {
         "term": "famous",
-        "weight": 7.672412581397378
+        "weight": 7.672412581397379
       },
       {
         "term": "frac",
-        "weight": 7.344431992311962
+        "weight": 7.344431992311961
       },
       {
         "term": "pairs",
-        "weight": 7.279727051427681
+        "weight": 7.279727051427682
       },
       {
         "term": "goes",
-        "weight": 6.998929758577886
+        "weight": 6.998929758577883
       },
       {
         "term": "caps",
-        "weight": 6.960007216680257
+        "weight": 6.960007216680254
       },
       {
         "term": "pillow",
-        "weight": 6.475962040009444
+        "weight": 6.475962040009446
       },
       {
         "term": "details",
-        "weight": 6.429608883939364
+        "weight": 6.429608883939366
       },
       {
         "term": "avoiding",
-        "weight": 6.398870421127591
+        "weight": 6.398870421127593
       },
       {
         "term": "significant",

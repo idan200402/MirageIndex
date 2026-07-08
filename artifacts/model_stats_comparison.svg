@@ -1,72 +1,92 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="980" height="938" viewBox="0 0 980 938">
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="1322" viewBox="0 0 980 1322">
 <rect width="100%" height="100%" fill="#ffffff"/>
 <text x="490.0" y="36" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="700">Model Stats Comparison</text>
 <rect x="190" y="54" width="14" height="14" fill="#2563eb" rx="2"/>
 <text x="212" y="66" font-family="Arial, sans-serif" font-size="13" fill="#222">PR AUC</text>
 <rect x="262" y="54" width="14" height="14" fill="#16a34a" rx="2"/>
 <text x="284" y="66" font-family="Arial, sans-serif" font-size="13" fill="#222">Accuracy</text>
-<line x1="190" y1="90" x2="190" y2="848" stroke="#222" stroke-width="1"/>
-<line x1="190" y1="848" x2="930" y2="848" stroke="#222" stroke-width="1"/>
-<line x1="190.0" y1="90" x2="190.0" y2="848" stroke="#eeeeee" stroke-width="1"/>
-<text x="190.0" y="872" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.0</text>
-<line x1="264.0" y1="90" x2="264.0" y2="848" stroke="#eeeeee" stroke-width="1"/>
-<text x="264.0" y="872" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.1</text>
-<line x1="338.0" y1="90" x2="338.0" y2="848" stroke="#eeeeee" stroke-width="1"/>
-<text x="338.0" y="872" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.2</text>
-<line x1="412.0" y1="90" x2="412.0" y2="848" stroke="#eeeeee" stroke-width="1"/>
-<text x="412.0" y="872" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.3</text>
-<line x1="486.0" y1="90" x2="486.0" y2="848" stroke="#eeeeee" stroke-width="1"/>
-<text x="486.0" y="872" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.4</text>
-<line x1="560.0" y1="90" x2="560.0" y2="848" stroke="#eeeeee" stroke-width="1"/>
-<text x="560.0" y="872" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.5</text>
-<line x1="634.0" y1="90" x2="634.0" y2="848" stroke="#eeeeee" stroke-width="1"/>
-<text x="634.0" y="872" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.6</text>
-<line x1="708.0" y1="90" x2="708.0" y2="848" stroke="#eeeeee" stroke-width="1"/>
-<text x="708.0" y="872" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.7</text>
-<line x1="782.0" y1="90" x2="782.0" y2="848" stroke="#eeeeee" stroke-width="1"/>
-<text x="782.0" y="872" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.8</text>
-<line x1="856.0" y1="90" x2="856.0" y2="848" stroke="#eeeeee" stroke-width="1"/>
-<text x="856.0" y="872" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.9</text>
-<line x1="930.0" y1="90" x2="930.0" y2="848" stroke="#eeeeee" stroke-width="1"/>
-<text x="930.0" y="872" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">1.0</text>
-<text x="176" y="142.4" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">encoder_head</text>
-<rect x="190" y="106.8" width="290.5" height="26.5" fill="#2563eb" rx="4"/>
-<text x="488.5" y="125.1" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3925</text>
-<rect x="190" y="141.4" width="593.8" height="26.5" fill="#16a34a" rx="4"/>
-<text x="791.8" y="159.6" font-family="Arial, sans-serif" font-size="13" fill="#222">0.8024</text>
-<text x="176" y="237.1" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">LLM_LoRA</text>
-<rect x="190" y="201.6" width="271.6" height="26.5" fill="#2563eb" rx="4"/>
-<text x="469.6" y="219.9" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3671</text>
-<rect x="190" y="236.1" width="594.6" height="26.5" fill="#16a34a" rx="4"/>
-<text x="792.6" y="254.4" font-family="Arial, sans-serif" font-size="13" fill="#222">0.8036</text>
-<text x="176" y="331.9" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">LLM_train_head</text>
-<rect x="190" y="296.3" width="267.5" height="26.5" fill="#2563eb" rx="4"/>
-<text x="465.5" y="314.6" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3614</text>
-<rect x="190" y="330.9" width="576.6" height="26.5" fill="#16a34a" rx="4"/>
-<text x="774.6" y="349.1" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7791</text>
-<text x="176" y="426.6" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">majority_voting</text>
-<rect x="190" y="391.1" width="150.3" height="26.5" fill="#2563eb" rx="4"/>
-<text x="348.3" y="409.4" font-family="Arial, sans-serif" font-size="13" fill="#222">0.2031</text>
-<rect x="190" y="425.6" width="589.7" height="26.5" fill="#16a34a" rx="4"/>
-<text x="787.7" y="443.9" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7969</text>
-<text x="176" y="521.4" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">naive_bayes</text>
-<rect x="190" y="485.8" width="217.4" height="26.5" fill="#2563eb" rx="4"/>
-<text x="415.4" y="504.1" font-family="Arial, sans-serif" font-size="13" fill="#222">0.2937</text>
-<rect x="190" y="520.4" width="542.9" height="26.5" fill="#16a34a" rx="4"/>
-<text x="740.9" y="538.6" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7336</text>
-<text x="176" y="616.1" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">tfidf_logistic_regression</text>
-<rect x="190" y="580.6" width="256.0" height="26.5" fill="#2563eb" rx="4"/>
-<text x="454.0" y="598.9" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3459</text>
-<rect x="190" y="615.1" width="584.8" height="26.5" fill="#16a34a" rx="4"/>
-<text x="782.8" y="633.4" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7902</text>
-<text x="176" y="710.9" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">tfidf_random_forest</text>
-<rect x="190" y="675.3" width="251.6" height="26.5" fill="#2563eb" rx="4"/>
-<text x="449.6" y="693.6" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3400</text>
-<rect x="190" y="709.9" width="594.6" height="26.5" fill="#16a34a" rx="4"/>
-<text x="792.6" y="728.1" font-family="Arial, sans-serif" font-size="13" fill="#222">0.8036</text>
-<text x="176" y="805.6" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">tfidf_xgboost</text>
-<rect x="190" y="770.1" width="282.6" height="26.5" fill="#2563eb" rx="4"/>
-<text x="480.6" y="788.4" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3819</text>
-<rect x="190" y="804.6" width="596.3" height="26.5" fill="#16a34a" rx="4"/>
-<text x="794.3" y="822.9" font-family="Arial, sans-serif" font-size="13" fill="#222">0.8058</text>
+<line x1="190" y1="90" x2="190" y2="1232" stroke="#222" stroke-width="1"/>
+<line x1="190" y1="1232" x2="930" y2="1232" stroke="#222" stroke-width="1"/>
+<line x1="190.0" y1="90" x2="190.0" y2="1232" stroke="#eeeeee" stroke-width="1"/>
+<text x="190.0" y="1256" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.0</text>
+<line x1="264.0" y1="90" x2="264.0" y2="1232" stroke="#eeeeee" stroke-width="1"/>
+<text x="264.0" y="1256" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.1</text>
+<line x1="338.0" y1="90" x2="338.0" y2="1232" stroke="#eeeeee" stroke-width="1"/>
+<text x="338.0" y="1256" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.2</text>
+<line x1="412.0" y1="90" x2="412.0" y2="1232" stroke="#eeeeee" stroke-width="1"/>
+<text x="412.0" y="1256" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.3</text>
+<line x1="486.0" y1="90" x2="486.0" y2="1232" stroke="#eeeeee" stroke-width="1"/>
+<text x="486.0" y="1256" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.4</text>
+<line x1="560.0" y1="90" x2="560.0" y2="1232" stroke="#eeeeee" stroke-width="1"/>
+<text x="560.0" y="1256" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.5</text>
+<line x1="634.0" y1="90" x2="634.0" y2="1232" stroke="#eeeeee" stroke-width="1"/>
+<text x="634.0" y="1256" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.6</text>
+<line x1="708.0" y1="90" x2="708.0" y2="1232" stroke="#eeeeee" stroke-width="1"/>
+<text x="708.0" y="1256" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.7</text>
+<line x1="782.0" y1="90" x2="782.0" y2="1232" stroke="#eeeeee" stroke-width="1"/>
+<text x="782.0" y="1256" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.8</text>
+<line x1="856.0" y1="90" x2="856.0" y2="1232" stroke="#eeeeee" stroke-width="1"/>
+<text x="856.0" y="1256" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">0.9</text>
+<line x1="930.0" y1="90" x2="930.0" y2="1232" stroke="#eeeeee" stroke-width="1"/>
+<text x="930.0" y="1256" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#444">1.0</text>
+<text x="176" y="142.6" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">encoder_head</text>
+<rect x="190" y="106.9" width="291.1" height="26.6" fill="#2563eb" rx="4"/>
+<text x="489.1" y="125.3" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3934</text>
+<rect x="190" y="141.6" width="593.8" height="26.6" fill="#16a34a" rx="4"/>
+<text x="791.8" y="159.9" font-family="Arial, sans-serif" font-size="13" fill="#222">0.8024</text>
+<text x="176" y="237.8" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">LLM_LoRA</text>
+<rect x="190" y="202.1" width="271.6" height="26.6" fill="#2563eb" rx="4"/>
+<text x="469.6" y="220.4" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3671</text>
+<rect x="190" y="236.8" width="594.6" height="26.6" fill="#16a34a" rx="4"/>
+<text x="792.6" y="255.1" font-family="Arial, sans-serif" font-size="13" fill="#222">0.8036</text>
+<text x="176" y="332.9" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">LLM_train_head</text>
+<rect x="190" y="297.3" width="267.5" height="26.6" fill="#2563eb" rx="4"/>
+<text x="465.5" y="315.6" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3614</text>
+<rect x="190" y="331.9" width="576.6" height="26.6" fill="#16a34a" rx="4"/>
+<text x="774.6" y="350.2" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7791</text>
+<text x="176" y="428.1" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">majority_voting</text>
+<rect x="190" y="392.4" width="150.3" height="26.6" fill="#2563eb" rx="4"/>
+<text x="348.3" y="410.8" font-family="Arial, sans-serif" font-size="13" fill="#222">0.2031</text>
+<rect x="190" y="427.1" width="589.7" height="26.6" fill="#16a34a" rx="4"/>
+<text x="787.7" y="445.4" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7969</text>
+<text x="176" y="523.2" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">naive_bayes</text>
+<rect x="190" y="487.6" width="217.4" height="26.6" fill="#2563eb" rx="4"/>
+<text x="415.4" y="505.9" font-family="Arial, sans-serif" font-size="13" fill="#222">0.2937</text>
+<rect x="190" y="522.2" width="542.9" height="26.6" fill="#16a34a" rx="4"/>
+<text x="740.9" y="540.6" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7336</text>
+<text x="176" y="618.4" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">naive_bayes_spans</text>
+<rect x="190" y="582.8" width="207.6" height="26.6" fill="#2563eb" rx="4"/>
+<text x="405.6" y="601.1" font-family="Arial, sans-serif" font-size="13" fill="#222">0.2806</text>
+<rect x="190" y="617.4" width="542.9" height="26.6" fill="#16a34a" rx="4"/>
+<text x="740.9" y="635.7" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7336</text>
+<text x="176" y="713.6" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">tfidf_logistic_regression</text>
+<rect x="190" y="677.9" width="256.0" height="26.6" fill="#2563eb" rx="4"/>
+<text x="454.0" y="696.3" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3459</text>
+<rect x="190" y="712.6" width="584.8" height="26.6" fill="#16a34a" rx="4"/>
+<text x="782.8" y="730.9" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7902</text>
+<text x="176" y="808.8" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">tfidf_logistic_regression_spans</text>
+<rect x="190" y="773.1" width="232.5" height="26.6" fill="#2563eb" rx="4"/>
+<text x="430.5" y="791.4" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3142</text>
+<rect x="190" y="807.8" width="574.1" height="26.6" fill="#16a34a" rx="4"/>
+<text x="772.1" y="826.1" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7758</text>
+<text x="176" y="903.9" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">tfidf_random_forest</text>
+<rect x="190" y="868.3" width="251.6" height="26.6" fill="#2563eb" rx="4"/>
+<text x="449.6" y="886.6" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3400</text>
+<rect x="190" y="902.9" width="594.6" height="26.6" fill="#16a34a" rx="4"/>
+<text x="792.6" y="921.2" font-family="Arial, sans-serif" font-size="13" fill="#222">0.8036</text>
+<text x="176" y="999.1" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">tfidf_random_forest_spans</text>
+<rect x="190" y="963.4" width="239.4" height="26.6" fill="#2563eb" rx="4"/>
+<text x="437.4" y="981.8" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3235</text>
+<rect x="190" y="998.1" width="586.4" height="26.6" fill="#16a34a" rx="4"/>
+<text x="784.4" y="1016.4" font-family="Arial, sans-serif" font-size="13" fill="#222">0.7925</text>
+<text x="176" y="1094.2" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">tfidf_xgboost</text>
+<rect x="190" y="1058.6" width="282.6" height="26.6" fill="#2563eb" rx="4"/>
+<text x="480.6" y="1076.9" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3819</text>
+<rect x="190" y="1093.2" width="596.3" height="26.6" fill="#16a34a" rx="4"/>
+<text x="794.3" y="1111.6" font-family="Arial, sans-serif" font-size="13" fill="#222">0.8058</text>
+<text x="176" y="1189.4" text-anchor="end" font-family="Arial, sans-serif" font-size="14" fill="#222">tfidf_xgboost_spans</text>
+<rect x="190" y="1153.8" width="257.8" height="26.6" fill="#2563eb" rx="4"/>
+<text x="455.8" y="1172.1" font-family="Arial, sans-serif" font-size="13" fill="#222">0.3483</text>
+<rect x="190" y="1188.4" width="449.3" height="26.6" fill="#16a34a" rx="4"/>
+<text x="647.3" y="1206.7" font-family="Arial, sans-serif" font-size="13" fill="#222">0.6071</text>
 </svg>

@@ -4,10 +4,19 @@ import re
 from typing import Any
 from collections import Counter
 
+# label field lives in data.py; imported here for the span-aware training builder
+from source.utils.data import LABEL_FIELD
+
 # constants
 TEXT_FIELDS = ("user_query", "chatgpt_response")
 POSITIVE_LABEL = "yes"
 TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9_']+")
+
+# schema field names used by the span-mode pipeline (document-level baseline uses
+# TEXT_FIELDS / record_to_text instead and is unaffected by these)
+QUERY_FIELD = "user_query"
+RESPONSE_FIELD = "chatgpt_response"
+SPANS_FIELD = "hallucination_spans"
 
 def tokenize(text: str) -> list[str]:
     """Split text into lowercase word tokens.
@@ -156,3 +165,236 @@ class TfidfVectorizer:
         """
         self.fit(texts)
         return self.transform(texts)
+
+
+# ---------------------------------------------------------------------------
+# Span-mode chunking and labeling helpers
+#
+# These power the opt-in ``--use-spans`` mode, which reframes the unit of
+# prediction from the whole (query, response) document to (query, chunk) pairs.
+# The chunk boundaries are computed spans-BLIND (chunk_response), and only
+# resolve_span_offsets / assign_chunk_labels are allowed to read the annotated
+# hallucination_spans, and only AFTER boundaries are fixed. This ordering keeps
+# chunk length/position/count from leaking span-annotation artifacts.
+# ---------------------------------------------------------------------------
+
+def chunk_response(response_text: str, window: int, stride: int) -> list[tuple[int, int]]:
+    """Slide a fixed word window over a response and return chunk character spans.
+
+    response_text: the raw response text (NOT lowercased, so match offsets index
+    the original string). window: window size in word tokens. stride: step in word
+    tokens between consecutive windows.\\
+    Returns a list of (start_char, end_char) spans, one per window, where the span
+    runs from the first word's start offset to the last word's end offset. Returns
+    [] when the response has no word tokens, and a single all-covering chunk when
+    there are fewer words than ``window``. This function is spans-BLIND: it never
+    receives or consults hallucination_spans. Raises ValueError on invalid window
+    or stride.
+    """
+    if window <= 0:
+        raise ValueError("window must be greater than 0")
+    if not 0 < stride <= window:
+        raise ValueError("stride must satisfy 0 < stride <= window")
+
+    # real character offsets of every word token, taken on the original casing
+    word_spans = [match.span() for match in TOKEN_PATTERN.finditer(response_text)]
+    if not word_spans:
+        return []
+
+    chunks = []
+    total = len(word_spans)
+    start = 0
+    while start < total:
+        end = min(start + window, total)
+        window_spans = word_spans[start:end]
+        # the chunk spans from the first word's start to the last word's end
+        chunks.append((window_spans[0][0], window_spans[-1][1]))
+        # stop once this window reached the end so the tail is not re-emitted
+        if end == total:
+            break
+        start += stride
+    return chunks
+
+
+def chunk_text_of(response_text: str, char_span: tuple[int, int]) -> str:
+    """Materialize the substring a chunk's character span refers to.
+
+    response_text: the raw response text. char_span: the (start, end) character
+    offsets produced by ``chunk_response``.\\
+    Returns response_text[start:end], the candidate chunk string paired with the query.
+    """
+    start, end = char_span
+    return response_text[start:end]
+
+
+def resolve_span_offsets(response_text: str, spans: list[str]) -> list[tuple[int, int]]:
+    """Locate every verbatim occurrence of each annotated span in the response.
+
+    response_text: the raw response text. spans: the ``hallucination_spans`` list,
+    whose entries are exact substrings of the response (some may not appear verbatim).\\
+    Returns the list of (start, end) character intervals for every occurrence found.
+    Empty spans and spans that never appear verbatim are silently skipped, so the
+    result may be empty. This is the ONLY function permitted to read
+    hallucination_spans, and it runs only AFTER chunk boundaries are fixed.
+    """
+    offsets = []
+    for span in spans:
+        if not span:
+            continue
+        search_from = 0
+        # walk past each hit so every non-overlapping occurrence is captured
+        while True:
+            found = response_text.find(span, search_from)
+            if found == -1:
+                break
+            offsets.append((found, found + len(span)))
+            search_from = found + len(span)
+    return offsets
+
+
+def assign_chunk_labels(
+    chunk_spans: list[tuple[int, int]],
+    span_offsets: list[tuple[int, int]],
+    overlap_threshold: float,
+) -> list[int]:
+    """Label each chunk by how much of it the resolved hallucination spans cover.
+
+    chunk_spans: the (start, end) character spans of each chunk. span_offsets: the
+    resolved hallucination-span intervals from ``resolve_span_offsets``.
+    overlap_threshold: minimum covered fraction for a chunk to count as hallucinated.\\
+    Returns one 0/1 label per chunk: 1 when the fraction of the chunk's characters
+    covered by the UNION of the span intervals is >= overlap_threshold, else 0.
+    Overlapping spans are merged before counting so double-covered characters are
+    never counted twice. Consults only character overlap, never chunk index/position.
+    """
+    labels = []
+    for chunk_start, chunk_end in chunk_spans:
+        chunk_length = chunk_end - chunk_start
+        # a degenerate zero-length chunk cannot be covered, so it stays negative
+        if chunk_length <= 0:
+            labels.append(0)
+            continue
+
+        # intersect the chunk with each span, keeping only non-empty overlaps
+        intersections = []
+        for span_start, span_end in span_offsets:
+            low = max(chunk_start, span_start)
+            high = min(chunk_end, span_end)
+            if low < high:
+                intersections.append((low, high))
+
+        # merge the intersection intervals so shared characters are counted once
+        covered = 0
+        if intersections:
+            intersections.sort()
+            current_low, current_high = intersections[0]
+            for low, high in intersections[1:]:
+                if low <= current_high:
+                    current_high = max(current_high, high)
+                else:
+                    covered += current_high - current_low
+                    current_low, current_high = low, high
+            covered += current_high - current_low
+
+        labels.append(1 if covered / chunk_length >= overlap_threshold else 0)
+    return labels
+
+
+def build_chunk_examples(
+    records: list[dict[str, Any]],
+    window: int,
+    stride: int,
+) -> tuple[list[str], list[str], list[tuple[int, int]], list[int], int]:
+    """Build spans-FREE (query, chunk) examples for validation/test/inference.
+
+    records: the split's records, consumed in order. window / stride: chunking config.\\
+    Returns (queries, chunks, chunk_spans, doc_index, n_docs). For each record, its
+    response is chunked and one entry per chunk is appended: the record's query text,
+    the chunk text, the chunk's (start, end) character span, and the record's positional
+    index. Records that yield zero chunks still count toward ``n_docs`` and simply
+    contribute no entries (their document later aggregates to 0.0). Carries NO labels.
+
+    The chunk spans are always returned (not optional) because the noisy-OR aggregation
+    declusters correlated overlapping chunks by their character position. The alignment
+    assertions guard the DOC-TO-CHUNK ALIGNMENT INVARIANT: callers must pass records in
+    the same order later used to build y_true, with no filtering/resorting in between.
+    """
+    queries: list[str] = []
+    chunks: list[str] = []
+    chunk_spans: list[tuple[int, int]] = []
+    doc_index: list[int] = []
+
+    for index, record in enumerate(records):
+        response_text = str(record.get(RESPONSE_FIELD, ""))
+        query = str(record.get(QUERY_FIELD, ""))
+        for span in chunk_response(response_text, window, stride):
+            queries.append(query)
+            chunks.append(chunk_text_of(response_text, span))
+            chunk_spans.append(span)
+            doc_index.append(index)
+
+    n_docs = len(records)
+    assert len(queries) == len(chunks) == len(chunk_spans) == len(doc_index)
+    if doc_index:
+        assert max(doc_index) < n_docs
+    return queries, chunks, chunk_spans, doc_index, n_docs
+
+
+def build_train_chunk_examples(
+    records: list[dict[str, Any]],
+    window: int,
+    stride: int,
+    overlap_threshold: float,
+) -> tuple[list[str], list[str], list[int], dict[str, int]]:
+    """Build span-AWARE (query, chunk, label) examples for TRAINING ONLY.
+
+    records: the training records. window / stride: chunking config. overlap_threshold:
+    fraction of a chunk a span must cover for the chunk to be labeled hallucinated.\\
+    Returns (queries, chunks, labels, audit). Chunk boundaries are computed spans-blind;
+    then per record: a hallucination=="no" record contributes all-negative chunks; a
+    hallucination=="yes" record has its spans resolved and, if at least one resolves,
+    its chunks are labeled by overlap. A yes-record whose spans resolve to ZERO intervals
+    is skipped entirely (we cannot know which chunks are positive). ``audit`` reports the
+    span-coverage counts for the metrics payload.
+    """
+    queries: list[str] = []
+    chunks: list[str] = []
+    labels: list[int] = []
+
+    yes_records_total = 0
+    yes_records_resolved = 0
+    yes_records_zero_spans = 0
+
+    for record in records:
+        response_text = str(record.get(RESPONSE_FIELD, ""))
+        query = str(record.get(QUERY_FIELD, ""))
+        chunk_spans = chunk_response(response_text, window, stride)
+
+        if record.get(LABEL_FIELD) != POSITIVE_LABEL:
+            # a non-hallucinated document contributes only negative chunks
+            chunk_labels = [0] * len(chunk_spans)
+        else:
+            yes_records_total += 1
+            span_offsets = resolve_span_offsets(response_text, record.get(SPANS_FIELD, []) or [])
+            # a known-positive doc with no resolvable spans is excluded rather than
+            # mislabeled all-negative
+            if not span_offsets:
+                yes_records_zero_spans += 1
+                continue
+            yes_records_resolved += 1
+            chunk_labels = assign_chunk_labels(chunk_spans, span_offsets, overlap_threshold)
+
+        for span, label in zip(chunk_spans, chunk_labels):
+            queries.append(query)
+            chunks.append(chunk_text_of(response_text, span))
+            labels.append(label)
+
+    positive_chunks = sum(labels)
+    audit = {
+        "yes_records_total": yes_records_total,
+        "yes_records_resolved": yes_records_resolved,
+        "yes_records_zero_spans": yes_records_zero_spans,
+        "positive_chunks": positive_chunks,
+        "negative_chunks": len(labels) - positive_chunks,
+    }
+    return queries, chunks, labels, audit
