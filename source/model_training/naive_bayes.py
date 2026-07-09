@@ -161,12 +161,13 @@ def main() -> None:
     build_audit = None
 
     if args.use_spans:
-        # cross-encoder fallback: each (query, chunk) pair is one document string, fed
-        # to the SAME NB estimator. No class weighting (intentional -- see blueprint).
-        queries, chunks, chunk_labels, build_audit = build_train_chunk_examples(
+        # chunk-level training: each response chunk is one document string (the query is
+        # dropped, being constant per doc), fed to the SAME NB estimator. No class weighting
+        # (intentional -- see blueprint).
+        _queries, chunks, chunk_labels, build_audit = build_train_chunk_examples(
             train_records, args.chunk_window, args.chunk_stride, args.overlap_threshold
         )
-        train_texts = [f"{query}\n{chunk}" for query, chunk in zip(queries, chunks)]
+        train_texts = list(chunks)
         train_str_labels = [POSITIVE_LABEL if label == 1 else "no" for label in chunk_labels]
         model.fit(train_texts, train_str_labels)
         # NB needs no vectorizer, so score raw chunk text directly

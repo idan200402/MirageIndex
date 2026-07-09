@@ -334,12 +334,12 @@ def main() -> None:
     class_weight = 1.0
 
     if args.use_spans:
-        # cross-encoder fallback: (query, chunk) rendered as one document, TF-IDF
-        # vectorized, then scored by the same forest with positive-chunk weighting
-        queries, chunks, chunk_labels, build_audit = build_train_chunk_examples(
+        # chunk-level training: each response chunk is one TF-IDF document (the query is
+        # dropped, being constant per doc), scored by the same forest with positive-chunk weighting
+        _queries, chunks, chunk_labels, build_audit = build_train_chunk_examples(
             train_records, args.chunk_window, args.chunk_stride, args.overlap_threshold
         )
-        train_texts = [f"{query}\n{chunk}" for query, chunk in zip(queries, chunks)]
+        train_texts = list(chunks)
         train_vectors = vectorizer.fit_transform(train_texts)
         class_weight = compute_class_weight_ratio(chunk_labels)
         model.fit(train_vectors, chunk_labels, feature_count=len(vectorizer.vocabulary), class_weight=class_weight)

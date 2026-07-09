@@ -69,7 +69,7 @@ def add_common_parsing(parser: argparse.ArgumentParser ) -> argparse.ArgumentPar
     parser.add_argument(
         "--overlap-threshold",
         type=float,
-        default=0.5,
+        default=0.25,
         help="Min fraction of a chunk covered by a span for the chunk to be labeled hallucinated.",
     )
     parser.add_argument(
@@ -260,11 +260,13 @@ def score_records_by_chunks(
     Returns (response_scores, y_pred): the aggregated per-document scores and their
     thresholded labels. Shared by every classical model so aggregation is identical.
     """
-    queries, chunks, chunk_spans, doc_index, n_docs = build_chunk_examples(
+    _queries, chunks, chunk_spans, doc_index, n_docs = build_chunk_examples(
         records, args.chunk_window, args.chunk_stride
     )
-    # render each (query, chunk) pair the same way record_to_text joins its fields
-    chunk_documents = [f"{query}\n{chunk}" for query, chunk in zip(queries, chunks)]
+    # score each chunk on its own text: the query is constant across a document's chunks,
+    # so prepending it dilutes the chunk-specific TF-IDF signal and attaches identical
+    # query tokens to both positive and negative chunks of the same document
+    chunk_documents = list(chunks)
 
     if vectorizer is not None:
         vectors = vectorizer.transform(chunk_documents)

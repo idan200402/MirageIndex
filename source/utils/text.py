@@ -252,27 +252,26 @@ def resolve_span_offsets(response_text: str, spans: list[str]) -> list[tuple[int
     return offsets
 
 
-def assign_chunk_labels(
+def chunk_coverage_fractions(
     chunk_spans: list[tuple[int, int]],
     span_offsets: list[tuple[int, int]],
-    overlap_threshold: float,
-) -> list[int]:
-    """Label each chunk by how much of it the resolved hallucination spans cover.
+) -> list[float]:
+    """Fraction of each chunk's characters covered by the union of resolved spans.
 
     chunk_spans: the (start, end) character spans of each chunk. span_offsets: the
-    resolved hallucination-span intervals from ``resolve_span_offsets``.
-    overlap_threshold: minimum covered fraction for a chunk to count as hallucinated.\\
-    Returns one 0/1 label per chunk: 1 when the fraction of the chunk's characters
-    covered by the UNION of the span intervals is >= overlap_threshold, else 0.
-    Overlapping spans are merged before counting so double-covered characters are
-    never counted twice. Consults only character overlap, never chunk index/position.
+    resolved hallucination-span intervals from ``resolve_span_offsets``.\\
+    Returns one float in [0, 1] per chunk: the share of the chunk's characters covered
+    by the UNION of the span intervals (overlapping spans merged so double-covered
+    characters are counted once). A degenerate zero-length chunk yields 0.0. Consults
+    only character overlap, never chunk index/position. This is the shared coverage
+    primitive used both to threshold labels and to pick a fallback positive chunk.
     """
-    labels = []
+    fractions = []
     for chunk_start, chunk_end in chunk_spans:
         chunk_length = chunk_end - chunk_start
-        # a degenerate zero-length chunk cannot be covered, so it stays negative
+        # a degenerate zero-length chunk cannot be covered, so it stays 0.0
         if chunk_length <= 0:
-            labels.append(0)
+            fractions.append(0.0)
             continue
 
         # intersect the chunk with each span, keeping only non-empty overlaps
@@ -296,8 +295,27 @@ def assign_chunk_labels(
                     current_low, current_high = low, high
             covered += current_high - current_low
 
-        labels.append(1 if covered / chunk_length >= overlap_threshold else 0)
-    return labels
+        fractions.append(covered / chunk_length)
+    return fractions
+
+
+def assign_chunk_labels(
+    chunk_spans: list[tuple[int, int]],
+    span_offsets: list[tuple[int, int]],
+    overlap_threshold: float,
+) -> list[int]:
+    """Label each chunk by how much of it the resolved hallucination spans cover.
+
+    chunk_spans: the (start, end) character spans of each chunk. span_offsets: the
+    resolved hallucination-span intervals from ``resolve_span_offsets``.
+    overlap_threshold: minimum covered fraction for a chunk to count as hallucinated.\\
+    Returns one 0/1 label per chunk: 1 when the chunk's covered fraction (from
+    ``chunk_coverage_fractions``) is >= overlap_threshold, else 0.
+    """
+    return [
+        1 if fraction >= overlap_threshold else 0
+        for fraction in chunk_coverage_fractions(chunk_spans, span_offsets)
+    ]
 
 
 def build_chunk_examples(
@@ -353,8 +371,10 @@ def build_train_chunk_examples(
     Returns (queries, chunks, labels, audit). Chunk boundaries are computed spans-blind;
     then per record: a hallucination=="no" record contributes all-negative chunks; a
     hallucination=="yes" record has its spans resolved and, if at least one resolves,
-    its chunks are labeled by overlap. A yes-record whose spans resolve to ZERO intervals
-    is skipped entirely (we cannot know which chunks are positive). ``audit`` reports the
+    its chunks are labeled by overlap. When no chunk clears ``overlap_threshold`` its
+    highest-overlap chunk is promoted to positive, so a resolved positive doc never
+    trains as all-negative. A yes-record whose spans resolve to ZERO intervals is skipped
+    entirely (we cannot know which chunks are positive). ``audit`` reports the
     span-coverage counts for the metrics payload.
     """
     queries: list[str] = []
@@ -364,6 +384,7 @@ def build_train_chunk_examples(
     yes_records_total = 0
     yes_records_resolved = 0
     yes_records_zero_spans = 0
+    yes_records_fallback_positive = 0
 
     for record in records:
         response_text = str(record.get(RESPONSE_FIELD, ""))
@@ -383,6 +404,14 @@ def build_train_chunk_examples(
                 continue
             yes_records_resolved += 1
             chunk_labels = assign_chunk_labels(chunk_spans, span_offsets, overlap_threshold)
+            # a resolved positive doc must never train as all-negative: when no chunk
+            # clears the overlap threshold (a short span straddling window boundaries),
+            # promote its highest-overlap chunk so the hallucination signal is not inverted
+            if not any(chunk_labels):
+                fractions = chunk_coverage_fractions(chunk_spans, span_offsets)
+                if fractions and max(fractions) > 0:
+                    chunk_labels[fractions.index(max(fractions))] = 1
+                    yes_records_fallback_positive += 1
 
         for span, label in zip(chunk_spans, chunk_labels):
             queries.append(query)
@@ -394,6 +423,7 @@ def build_train_chunk_examples(
         "yes_records_total": yes_records_total,
         "yes_records_resolved": yes_records_resolved,
         "yes_records_zero_spans": yes_records_zero_spans,
+        "yes_records_fallback_positive": yes_records_fallback_positive,
         "positive_chunks": positive_chunks,
         "negative_chunks": len(labels) - positive_chunks,
     }
