@@ -28,7 +28,7 @@ python source\model_training\majority_voting.py --export-metrics True
 python source\model_training\naive_bayes.py --export-metrics True
 python source\model_training\tfidf_logistic_regression.py --export-metrics True
 python source\model_training\tfidf_random_forest.py --export-metrics True
-python source\model_training\tfidf_xgboost.py --export-metrics True 
+python source\model_training\tfidf_xgboost.py --export-metrics True
 python source\model_training\encoder_head.py --export-metrics True
 python source\model_training\LLM_LoRA.py --export-metrics True
 python source\model_training\LLM_train_head.py --export-metrics True
@@ -61,7 +61,7 @@ These are added to every model (inert unless `--use-spans True` is passed):
 - `--use-spans` - `True` trains at the chunk level; `False` (default) is the document-level baseline.
 - `--chunk-window` - word-window size for chunking (default `40`).
 - `--chunk-stride` - word-window stride between chunks (default `20`).
-- `--overlap-threshold` - min fraction of a chunk a span must cover to label it hallucinated (default `0.5`).
+- `--overlap-threshold` - min fraction of a chunk a span must cover to label it hallucinated (default `0.25`).
 - `--aggregation` - how chunk scores combine into a document score: `max` (default), `mean_topk`, or `noisy_or`.
 - `--top-k` - `K` for the `mean_topk` aggregation (default `3`).
 - `--response-threshold` - decision threshold on the aggregated response score (default `0.5`).

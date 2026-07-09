@@ -3,14 +3,14 @@
     "best_head_weights": "artifacts/LLM_train_head_spans/best_head.pt"
   },
   "base_model": "Qwen/Qwen3-0.6B",
-  "best_val_loss": 0.537758691895502,
+  "best_val_loss": 0.5838103142985748,
   "data_path": "data/general_data.json",
   "metrics": {
-    "accuracy": 0.7458379578246392,
-    "pr_auc": 0.363908284043817,
-    "precision": 0.3838383838383838,
-    "recall": 0.41530054644808745,
-    "roc_auc": 0.6881592766793004
+    "accuracy": 0.7114317425083241,
+    "pr_auc": 0.3581756068342596,
+    "precision": 0.34901960784313724,
+    "recall": 0.48633879781420764,
+    "roc_auc": 0.6852748222902111
   },
   "model_name": "LLM_train_head_spans",
   "seed": 42,
@@ -18,19 +18,20 @@
     "aggregation": "max",
     "chunk_stride": 20,
     "chunk_window": 40,
-    "overlap_threshold": 0.5,
+    "overlap_threshold": 0.25,
     "response_threshold": 0.5,
     "top_k": 3
   },
   "span_coverage": {
-    "negative_chunks": 9423,
-    "positive_chunks": 760,
+    "negative_chunks": 9190,
+    "positive_chunks": 993,
+    "yes_records_fallback_positive": 49,
     "yes_records_resolved": 472,
     "yes_records_total": 526,
     "yes_records_zero_spans": 54
   },
   "test_examples": 901,
-  "test_loss": 0.595176327046803,
+  "test_loss": 0.6414391438324472,
   "test_size": 0.2,
   "train_examples": 2885,
   "trained_parameters": {
@@ -56,32 +57,32 @@
     {
       "epoch": 1,
       "learning_rate": 0.001,
-      "train_loss": 1.1478856444405652,
-      "val_document_bce": 0.6517191272005304
+      "train_loss": 1.1411828871830665,
+      "val_document_bce": 0.7872424268796175
     },
     {
       "epoch": 2,
       "learning_rate": 0.001,
-      "train_loss": 0.936729305308284,
-      "val_document_bce": 0.8615874541811308
+      "train_loss": 0.9771971290617036,
+      "val_document_bce": 1.118551158285322
     },
     {
       "epoch": 3,
       "learning_rate": 0.001,
-      "train_loss": 0.8776035610519457,
-      "val_document_bce": 1.0256528309669093
+      "train_loss": 0.9129506576205241,
+      "val_document_bce": 1.02875553449204
     },
     {
       "epoch": 4,
       "learning_rate": 0.001,
-      "train_loss": 0.8156800933469786,
-      "val_document_bce": 0.537758691895502
+      "train_loss": 0.8868645906659085,
+      "val_document_bce": 0.5838103142985748
     },
     {
       "epoch": 5,
       "learning_rate": 0.001,
-      "train_loss": 0.7719280731771078,
-      "val_document_bce": 0.8482723484956284
+      "train_loss": 0.847437196038133,
+      "val_document_bce": 0.7750752585152434
     }
   ],
   "val_examples": 721,

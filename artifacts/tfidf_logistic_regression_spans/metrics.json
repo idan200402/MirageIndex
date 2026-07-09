@@ -1,12 +1,12 @@
 {
-  "class_weight": 13.09060773480663,
+  "class_weight": 9.743049705139006,
   "data_path": "data/general_data.json",
   "metrics": {
-    "accuracy": 0.7758046614872364,
-    "pr_auc": 0.31416918981801195,
-    "precision": 0.379746835443038,
-    "recall": 0.16393442622950818,
-    "roc_auc": 0.6141832960409151
+    "accuracy": 0.7214206437291898,
+    "pr_auc": 0.2978450669457689,
+    "precision": 0.2536231884057971,
+    "recall": 0.1912568306010929,
+    "roc_auc": 0.5984900375968462
   },
   "model_name": "tfidf_logistic_regression_spans",
   "seed": 42,
@@ -14,13 +14,14 @@
     "aggregation": "max",
     "chunk_stride": 20,
     "chunk_window": 40,
-    "overlap_threshold": 0.5,
+    "overlap_threshold": 0.25,
     "response_threshold": 0.5,
     "top_k": 3
   },
   "span_coverage": {
-    "negative_chunks": 11847,
-    "positive_chunks": 905,
+    "negative_chunks": 11565,
+    "positive_chunks": 1187,
+    "yes_records_fallback_positive": 58,
     "yes_records_resolved": 567,
     "yes_records_total": 632,
     "yes_records_zero_spans": 65
@@ -29,7 +30,7 @@
   "test_size": 0.2,
   "train_examples": 3606,
   "trained_parameters": {
-    "bias": -6.20875741932674,
+    "bias": -5.046586390423543,
     "epochs": 80,
     "l2": 0.0001,
     "learning_rate": 0.5,
@@ -38,93 +39,93 @@
     "negative_label_terms": [
       {
         "term": "41",
-        "weight": -12.42106154981774
+        "weight": -12.057774169139021
       },
       {
-        "term": "solving",
-        "weight": -9.23542320031261
+        "term": "economy",
+        "weight": -11.958605063686491
       },
       {
-        "term": "engagement",
-        "weight": -9.126915979037319
+        "term": "multiply",
+        "weight": -11.486861899747884
       },
       {
-        "term": "store",
-        "weight": -9.009202138211666
-      },
-      {
-        "term": "intercept",
-        "weight": -8.89337511923944
-      },
-      {
-        "term": "varies",
-        "weight": -8.595960615088076
-      },
-      {
-        "term": "99",
-        "weight": -8.477123210718206
+        "term": "05",
+        "weight": -10.760447490938185
       },
       {
         "term": "purchase",
-        "weight": -8.36220985981158
+        "weight": -10.287381983086405
       },
       {
-        "term": "setting",
-        "weight": -8.330245144871027
+        "term": "z",
+        "weight": -10.254134194960256
+      },
+      {
+        "term": "analyzing",
+        "weight": -10.054914777188738
       },
       {
         "term": "unexpected",
-        "weight": -8.323607363038068
+        "weight": -9.96351624970518
+      },
+      {
+        "term": "zero",
+        "weight": -9.736141837663173
+      },
+      {
+        "term": "isolate",
+        "weight": -9.651172196341275
       }
     ],
     "positive_label": "yes",
     "positive_label_terms": [
       {
-        "term": "interior",
-        "weight": 17.297567248121663
+        "term": "embracing",
+        "weight": 16.520788324376117
+      },
+      {
+        "term": "abc",
+        "weight": 16.00951184148102
+      },
+      {
+        "term": "bump",
+        "weight": 14.377120995252875
       },
       {
         "term": "pairs",
-        "weight": 16.752843332195496
-      },
-      {
-        "term": "lake",
-        "weight": 14.869995934579412
-      },
-      {
-        "term": "details",
-        "weight": 14.408798615139418
-      },
-      {
-        "term": "resolution",
-        "weight": 14.284414824766202
-      },
-      {
-        "term": "verification",
-        "weight": 13.838456085970403
-      },
-      {
-        "term": "girlfriend",
-        "weight": 13.747479197900764
-      },
-      {
-        "term": "bouquet",
-        "weight": 13.677660230562532
+        "weight": 14.288774840129353
       },
       {
         "term": "370",
-        "weight": 13.131202769776463
+        "weight": 14.209012233357077
       },
       {
-        "term": "exit",
-        "weight": 13.098632946521725
+        "term": "2021",
+        "weight": 12.911232329688675
+      },
+      {
+        "term": "stanza",
+        "weight": 12.800396319251801
+      },
+      {
+        "term": "differences",
+        "weight": 12.597887009474436
+      },
+      {
+        "term": "solver",
+        "weight": 12.595879179457032
+      },
+      {
+        "term": "resolution",
+        "weight": 12.531192439698362
       }
     ],
     "text_fields": [
       "user_query",
       "chatgpt_response"
     ],
-    "vocabulary_size": 19745,
-    "weights_count": 19745
+    "vocabulary_size": 19225,
+    "weights_count": 19225
   }
 }

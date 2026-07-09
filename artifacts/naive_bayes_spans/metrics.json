@@ -2,11 +2,11 @@
   "alpha": 1.0,
   "data_path": "data/general_data.json",
   "metrics": {
-    "accuracy": 0.7336293007769146,
-    "pr_auc": 0.2805740212991428,
-    "precision": 0.3425414364640884,
-    "recall": 0.33879781420765026,
-    "roc_auc": 0.6160707490448575
+    "accuracy": 0.7180910099889012,
+    "pr_auc": 0.2744134855416345,
+    "precision": 0.33014354066985646,
+    "recall": 0.3770491803278688,
+    "roc_auc": 0.6119457509475319
   },
   "model_name": "naive_bayes_spans",
   "seed": 42,
@@ -14,13 +14,14 @@
     "aggregation": "max",
     "chunk_stride": 20,
     "chunk_window": 40,
-    "overlap_threshold": 0.5,
+    "overlap_threshold": 0.25,
     "response_threshold": 0.5,
     "top_k": 3
   },
   "span_coverage": {
-    "negative_chunks": 11847,
-    "positive_chunks": 905,
+    "negative_chunks": 11565,
+    "positive_chunks": 1187,
+    "yes_records_fallback_positive": 58,
     "yes_records_resolved": 567,
     "yes_records_total": 632,
     "yes_records_zero_spans": 65
@@ -35,18 +36,18 @@
   "trained_parameters": {
     "alpha": 1.0,
     "label_counts": {
-      "no": 11847,
-      "yes": 905
+      "no": 11565,
+      "yes": 1187
     },
     "labels": [
       "no",
       "yes"
     ],
     "total_tokens_by_label": {
-      "no": 592522,
-      "yes": 47308
+      "no": 432027,
+      "yes": 43276
     },
-    "vocabulary_size": 19745
+    "vocabulary_size": 19225
   },
-  "vocabulary_size": 19745
+  "vocabulary_size": 19225
 }
