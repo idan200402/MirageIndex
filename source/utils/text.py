@@ -227,28 +227,142 @@ def chunk_text_of(response_text: str, char_span: tuple[int, int]) -> str:
     return response_text[start:end]
 
 
-def resolve_span_offsets(response_text: str, spans: list[str]) -> list[tuple[int, int]]:
-    """Locate every verbatim occurrence of each annotated span in the response.
+def _normalize_with_offsets(text: str) -> tuple[str, list[int], list[int]]:
+    """Lowercase and whitespace-collapse ``text``, keeping a map back to raw offsets.
 
-    response_text: the raw response text. spans: the ``hallucination_spans`` list,
-    whose entries are exact substrings of the response (some may not appear verbatim).\\
-    Returns the list of (start, end) character intervals for every occurrence found.
-    Empty spans and spans that never appear verbatim are silently skipped, so the
-    result may be empty. This is the ONLY function permitted to read
-    hallucination_spans, and it runs only AFTER chunk boundaries are fixed.
+    text: the raw string to normalize.\\
+    Returns (normalized, starts, ends): ``normalized`` is ``text`` lowercased with each
+    run of whitespace collapsed to a single space; ``starts[i]`` / ``ends[i]`` are the raw
+    character offsets that normalized character ``i`` was produced from (a collapsed space
+    spans the whole raw whitespace run). This lets a match found in the normalized string
+    be mapped back to exact raw offsets, so fuzzy resolution never distorts chunk coverage.
     """
-    offsets = []
+    normalized_chars: list[str] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        if text[index].isspace():
+            # collapse the whole whitespace run to one space mapped over its raw extent
+            run_end = index
+            while run_end < length and text[run_end].isspace():
+                run_end += 1
+            normalized_chars.append(" ")
+            starts.append(index)
+            ends.append(run_end)
+            index = run_end
+        else:
+            normalized_chars.append(text[index].lower())
+            starts.append(index)
+            ends.append(index + 1)
+            index += 1
+    return "".join(normalized_chars), starts, ends
+
+
+def _find_all_verbatim(response_text: str, span: str) -> list[tuple[int, int]]:
+    """Return the raw (start, end) offsets of every non-overlapping verbatim occurrence."""
+    offsets: list[tuple[int, int]] = []
+    search_from = 0
+    while True:
+        found = response_text.find(span, search_from)
+        if found == -1:
+            break
+        offsets.append((found, found + len(span)))
+        search_from = found + len(span)
+    return offsets
+
+
+def _find_all_normalized(
+    normalized_text: str,
+    starts: list[int],
+    ends: list[int],
+    span: str,
+) -> list[tuple[int, int]]:
+    """Locate a span in whitespace/case-normalized space, mapped back to raw offsets.
+
+    normalized_text / starts / ends: the outputs of ``_normalize_with_offsets`` on the
+    response. span: the raw annotated span.\\
+    Returns the raw (start, end) intervals of every non-overlapping occurrence of the
+    normalized span, or [] when the normalized span is empty or never appears.
+    """
+    normalized_span, _, _ = _normalize_with_offsets(span)
+    normalized_span = normalized_span.strip()
+    if not normalized_span:
+        return []
+
+    offsets: list[tuple[int, int]] = []
+    search_from = 0
+    while True:
+        found = normalized_text.find(normalized_span, search_from)
+        if found == -1:
+            break
+        last = found + len(normalized_span) - 1
+        # map the normalized match boundaries back to raw character offsets
+        offsets.append((starts[found], ends[last]))
+        search_from = found + len(normalized_span)
+    return offsets
+
+
+def resolve_spans_detailed(
+    response_text: str,
+    spans: list[str],
+) -> tuple[list[tuple[int, int]], dict[str, int]]:
+    """Resolve annotated spans to raw offsets, verbatim first then whitespace/case-fuzzy.
+
+    response_text: the raw response text. spans: the ``hallucination_spans`` list.\\
+    Returns (offsets, counts): ``offsets`` is every resolved (start, end) raw interval;
+    ``counts`` reports how many spans resolved verbatim, only after normalization, or not
+    at all (``verbatim_spans`` / ``normalized_spans`` / ``unresolved_spans``). Empty spans
+    are ignored and do not count. Verbatim matching is tried first so exact spans keep
+    their previous offsets; only spans that fail verbatim fall back to normalized matching
+    (recovering whitespace/case-only mismatches). This is the ONLY function permitted to
+    read hallucination_spans, and it runs only AFTER chunk boundaries are fixed.
+    """
+    offsets: list[tuple[int, int]] = []
+    verbatim_spans = 0
+    normalized_spans = 0
+    unresolved_spans = 0
+    normalized_text: str | None = None
+    starts: list[int] = []
+    ends: list[int] = []
+
     for span in spans:
         if not span:
             continue
-        search_from = 0
-        # walk past each hit so every non-overlapping occurrence is captured
-        while True:
-            found = response_text.find(span, search_from)
-            if found == -1:
-                break
-            offsets.append((found, found + len(span)))
-            search_from = found + len(span)
+        verbatim_hits = _find_all_verbatim(response_text, span)
+        if verbatim_hits:
+            offsets.extend(verbatim_hits)
+            verbatim_spans += 1
+            continue
+        # only build the normalized index once, and only if a verbatim match failed
+        if normalized_text is None:
+            normalized_text, starts, ends = _normalize_with_offsets(response_text)
+        fuzzy_hits = _find_all_normalized(normalized_text, starts, ends, span)
+        if fuzzy_hits:
+            offsets.extend(fuzzy_hits)
+            normalized_spans += 1
+        else:
+            unresolved_spans += 1
+
+    counts = {
+        "verbatim_spans": verbatim_spans,
+        "normalized_spans": normalized_spans,
+        "unresolved_spans": unresolved_spans,
+    }
+    return offsets, counts
+
+
+def resolve_span_offsets(response_text: str, spans: list[str]) -> list[tuple[int, int]]:
+    """Locate every occurrence of each annotated span, verbatim then whitespace/case-fuzzy.
+
+    response_text: the raw response text. spans: the ``hallucination_spans`` list,
+    whose entries are substrings of the response (some may differ only in whitespace/case,
+    and some meta-annotations never appear at all).\\
+    Returns the list of (start, end) character intervals for every occurrence found. Thin
+    wrapper over ``resolve_spans_detailed`` that drops the diagnostic counts.
+    """
+    offsets, _ = resolve_spans_detailed(response_text, spans)
     return offsets
 
 
@@ -373,9 +487,10 @@ def build_train_chunk_examples(
     hallucination=="yes" record has its spans resolved and, if at least one resolves,
     its chunks are labeled by overlap. When no chunk clears ``overlap_threshold`` its
     highest-overlap chunk is promoted to positive, so a resolved positive doc never
-    trains as all-negative. A yes-record whose spans resolve to ZERO intervals is skipped
-    entirely (we cannot know which chunks are positive). ``audit`` reports the
-    span-coverage counts for the metrics payload.
+    trains as all-negative. A yes-record whose spans resolve to ZERO intervals (the
+    meta-annotation case) is kept as a delocalized positive by weakly labeling its
+    longest chunk; only a yes-record with no chunks at all is skipped. ``audit`` reports
+    the span-coverage and non-verbatim span counts for the metrics payload.
     """
     queries: list[str] = []
     chunks: list[str] = []
@@ -385,6 +500,11 @@ def build_train_chunk_examples(
     yes_records_resolved = 0
     yes_records_zero_spans = 0
     yes_records_fallback_positive = 0
+    yes_records_meta_positive = 0
+    positive_docs_all_negative = 0
+    verbatim_spans = 0
+    normalized_spans = 0
+    unresolved_spans = 0
 
     for record in records:
         response_text = str(record.get(RESPONSE_FIELD, ""))
@@ -396,22 +516,43 @@ def build_train_chunk_examples(
             chunk_labels = [0] * len(chunk_spans)
         else:
             yes_records_total += 1
-            span_offsets = resolve_span_offsets(response_text, record.get(SPANS_FIELD, []) or [])
-            # a known-positive doc with no resolvable spans is excluded rather than
-            # mislabeled all-negative
+            span_offsets, span_counts = resolve_spans_detailed(
+                response_text, record.get(SPANS_FIELD, []) or []
+            )
+            verbatim_spans += span_counts["verbatim_spans"]
+            normalized_spans += span_counts["normalized_spans"]
+            unresolved_spans += span_counts["unresolved_spans"]
+
             if not span_offsets:
-                yes_records_zero_spans += 1
-                continue
-            yes_records_resolved += 1
-            chunk_labels = assign_chunk_labels(chunk_spans, span_offsets, overlap_threshold)
-            # a resolved positive doc must never train as all-negative: when no chunk
-            # clears the overlap threshold (a short span straddling window boundaries),
-            # promote its highest-overlap chunk so the hallucination signal is not inverted
+                # no annotated span resolves even fuzzily: these are meta-annotations
+                # ("Incomplete answer", ...) that describe hallucination TYPE, not location.
+                # Keep the document as a delocalized positive by weakly labeling its longest
+                # chunk, rather than dropping the whole positive signal.
+                if not chunk_spans:
+                    yes_records_zero_spans += 1
+                    continue
+                chunk_labels = [0] * len(chunk_spans)
+                longest_index = max(
+                    range(len(chunk_spans)),
+                    key=lambda i: chunk_spans[i][1] - chunk_spans[i][0],
+                )
+                chunk_labels[longest_index] = 1
+                yes_records_meta_positive += 1
+            else:
+                yes_records_resolved += 1
+                chunk_labels = assign_chunk_labels(chunk_spans, span_offsets, overlap_threshold)
+                # a resolved positive doc must never train as all-negative: when no chunk
+                # clears the overlap threshold (a short span straddling window boundaries),
+                # promote its highest-overlap chunk so the hallucination signal is not inverted
+                if not any(chunk_labels):
+                    fractions = chunk_coverage_fractions(chunk_spans, span_offsets)
+                    if fractions and max(fractions) > 0:
+                        chunk_labels[fractions.index(max(fractions))] = 1
+                        yes_records_fallback_positive += 1
+
+            # residual data-quality gate: a positive document that still trains all-negative
             if not any(chunk_labels):
-                fractions = chunk_coverage_fractions(chunk_spans, span_offsets)
-                if fractions and max(fractions) > 0:
-                    chunk_labels[fractions.index(max(fractions))] = 1
-                    yes_records_fallback_positive += 1
+                positive_docs_all_negative += 1
 
         for span, label in zip(chunk_spans, chunk_labels):
             queries.append(query)
@@ -419,11 +560,19 @@ def build_train_chunk_examples(
             labels.append(label)
 
     positive_chunks = sum(labels)
+    total_spans = verbatim_spans + normalized_spans + unresolved_spans
     audit = {
         "yes_records_total": yes_records_total,
         "yes_records_resolved": yes_records_resolved,
         "yes_records_zero_spans": yes_records_zero_spans,
         "yes_records_fallback_positive": yes_records_fallback_positive,
+        "yes_records_meta_positive": yes_records_meta_positive,
+        "positive_docs_all_negative": positive_docs_all_negative,
+        "verbatim_spans": verbatim_spans,
+        "normalized_spans": normalized_spans,
+        "unresolved_spans": unresolved_spans,
+        # share of annotated spans that did not match verbatim (fuzzy-matched or unresolved)
+        "non_verbatim_span_rate": (normalized_spans + unresolved_spans) / total_spans if total_spans else 0.0,
         "positive_chunks": positive_chunks,
         "negative_chunks": len(labels) - positive_chunks,
     }

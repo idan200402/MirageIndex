@@ -5,7 +5,7 @@ import math
 from typing import Any
 
 # utility function imports
-from source.utils.training_metrics import parse_bool
+from source.utils.training_metrics import parse_bool, pr_auc
 from source.utils.text import build_chunk_examples, POSITIVE_LABEL
 # utility constant imports
 from source.utils.data import DEFAULT_DATA_PATH, DEFAULT_ARTIFACTS_DIR, DEFAULT_SEED, DEFAULT_TEST_SIZE
@@ -74,9 +74,13 @@ def add_common_parsing(parser: argparse.ArgumentParser ) -> argparse.ArgumentPar
     )
     parser.add_argument(
         "--aggregation",
-        choices=("max", "mean_topk", "noisy_or"),
-        default="max",
-        help="How chunk scores are aggregated to a document score at inference.",
+        choices=("auto", "max", "mean_topk", "noisy_or"),
+        default="auto",
+        help=(
+            "How chunk scores are aggregated to a document score at inference. "
+            "'auto' (default) selects the best of max/mean_topk/noisy_or on the validation "
+            "split by PR-AUC (neural models only; classical models fall back to max)."
+        ),
     )
     parser.add_argument("--top-k", type=int, default=3, help="K for the mean_topk aggregation.")
     parser.add_argument(
@@ -84,6 +88,16 @@ def add_common_parsing(parser: argparse.ArgumentParser ) -> argparse.ArgumentPar
         type=float,
         default=0.5,
         help="Decision threshold on the aggregated response score. Independent of --use-spans; always defined.",
+    )
+    parser.add_argument(
+        "--target-precision",
+        type=float,
+        default=None,
+        help=(
+            "When set (0-1), tune --response-threshold on the validation split to the "
+            "lowest threshold reaching this precision (neural span models only). "
+            "Unset (default) keeps the fixed --response-threshold, so the baseline is unchanged."
+        ),
     )
 
     return parser
@@ -166,6 +180,11 @@ def aggregate_document_score(
     """
     if not chunk_scores:
         return 0.0
+    # 'auto' is resolved to a concrete method by the caller after validation selection;
+    # any residual 'auto' (training-time model selection, classical scoring) falls back to
+    # 'max', the previous default, so behavior stays well-defined and unchanged there.
+    if method == "auto":
+        method = "max"
     # clamp defensively so a stray out-of-range score cannot break the aggregation
     scores = [min(1.0, max(0.0, score)) for score in chunk_scores]
 
@@ -218,6 +237,87 @@ def document_label(response_score: float, threshold: float, positive_label: str)
     Returns positive_label when response_score >= threshold, else "no".
     """
     return positive_label if response_score >= threshold else "no"
+
+
+def pick_threshold(
+    response_scores: list[float],
+    doc_labels: list[str],
+    target_precision: float,
+    positive_label: str = POSITIVE_LABEL,
+) -> float:
+    """Choose the lowest decision threshold whose validation precision meets a target.
+
+    response_scores: aggregated per-document scores on the tuning (validation) split.
+    doc_labels: the matching document labels. target_precision: minimum precision in [0, 1].
+    positive_label: the label counted as positive.\\
+    Returns the SMALLEST candidate threshold (a distinct score) whose precision is
+    >= target_precision, which is the highest-recall operating point that still clears the
+    precision floor. When no threshold reaches the target, returns the threshold with the
+    highest precision (ties broken toward the smaller threshold / higher recall). Returns
+    0.5 when there is no positive document to calibrate against.
+    """
+    if not any(label == positive_label for label in doc_labels):
+        return 0.5
+
+    # candidate thresholds are the distinct scores; predicting positive iff score >= t
+    candidates = sorted(set(response_scores))
+    best_fallback_threshold = 0.5
+    best_fallback_precision = -1.0
+
+    for threshold in candidates:
+        true_positive = 0
+        predicted_positive = 0
+        for score, label in zip(response_scores, doc_labels):
+            if score >= threshold:
+                predicted_positive += 1
+                if label == positive_label:
+                    true_positive += 1
+        if predicted_positive == 0:
+            continue
+        precision = true_positive / predicted_positive
+        # the smallest threshold that clears the target wins outright (max recall)
+        if precision >= target_precision:
+            return threshold
+        # otherwise remember the most precise operating point as a fallback
+        if precision > best_fallback_precision:
+            best_fallback_precision = precision
+            best_fallback_threshold = threshold
+
+    return best_fallback_threshold
+
+
+def select_best_aggregation(
+    grouped_scores: list[list[float]],
+    grouped_spans: list[list[tuple[int, int]]],
+    doc_labels: list[str],
+    methods: tuple[str, ...],
+    top_k: int,
+    positive_label: str = POSITIVE_LABEL,
+) -> tuple[str, dict[str, float | None]]:
+    """Pick the aggregation method with the best validation PR-AUC.
+
+    grouped_scores / grouped_spans: per-document chunk scores and character spans, as
+    produced by ``group_scores_by_doc`` on the validation split. doc_labels: the document
+    labels. methods: candidate aggregation names to try (concrete, never 'auto'). top_k:
+    K for mean_topk. positive_label: the label counted as positive.\\
+    Returns (best_method, pr_auc_by_method): the method with the highest defined PR-AUC and
+    the PR-AUC of every candidate (None where undefined). Ties keep the earliest method, and
+    an all-undefined sweep falls back to the first candidate.
+    """
+    pr_auc_by_method: dict[str, float | None] = {}
+    best_method = methods[0]
+    best_pr_auc: float | None = None
+    for method in methods:
+        response_scores = [
+            aggregate_document_score(chunk_scores, method, top_k, chunk_spans=chunk_spans)
+            for chunk_scores, chunk_spans in zip(grouped_scores, grouped_spans)
+        ]
+        value = pr_auc(doc_labels, response_scores, positive_label)
+        pr_auc_by_method[method] = value
+        if value is not None and (best_pr_auc is None or value > best_pr_auc):
+            best_pr_auc = value
+            best_method = method
+    return best_method, pr_auc_by_method
 
 
 def group_scores_by_doc(

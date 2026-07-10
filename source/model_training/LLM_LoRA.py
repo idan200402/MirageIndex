@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from source.utils.LLM_train import (
     add_learning_rate_grid_arg,
     add_llm_training_args,
+    build_span_head,
     compute_pos_weight,
     count_parameters,
     evaluate_document_metrics,
@@ -28,6 +29,7 @@ from source.utils.LLM_train import (
     require_torch_and_transformers,
     select_device,
     select_dtype,
+    select_span_operating_point,
     set_seed,
     split_llm_records,
     train_one_epoch,
@@ -353,9 +355,10 @@ def main() -> None:
             dropout=args.lora_dropout,
         )
 
-        # a single linear head maps the pooled hidden state to one logit
+        # a single linear head maps the pooled hidden state to one logit; span mode can
+        # regularize it with --dropout, while the baseline stays a plain Linear
         hidden_size = backbone.config.hidden_size
-        head = nn.Linear(hidden_size, 1).to(device)
+        head = build_span_head(nn, hidden_size, args.dropout if args.use_spans else 0.0).to(device)
         # the optimizer only sees the LoRA adapter and head parameters, not the frozen weights
         optimizer = torch.optim.AdamW(
             trainable_parameters(backbone, head),
@@ -363,6 +366,9 @@ def main() -> None:
             weight_decay=args.weight_decay,
         )
 
+        # early stopping (span mode only) tracks val improvement per learning rate
+        run_best_val = float("inf")
+        epochs_without_improvement = 0
         for epoch in range(1, args.epochs + 1):
             # train_backbone=True lets gradients flow into the LoRA adapters inside the backbone
             train_loss = train_one_epoch(
@@ -432,6 +438,17 @@ def main() -> None:
                 f"train_loss={train_loss:.4f} val_loss={val_loss:.4f}"
             )
 
+            # early stopping on the validation metric; span mode only so the baseline
+            # keeps running every epoch (byte-identical)
+            if val_loss < run_best_val:
+                run_best_val = val_loss
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+                if args.use_spans and args.patience and epochs_without_improvement >= args.patience:
+                    print(f"lr {learning_rate:g}: early stopping at epoch {epoch}")
+                    break
+
     # restore the best in-memory head and adapter weights seen during the grid search
     if best_head_state is not None:
         load_partial_state_dict(head, best_head_state)
@@ -444,9 +461,21 @@ def main() -> None:
         load_partial_state_dict(backbone, checkpoint["lora_state_dict"])
 
     # evaluate the restored configuration on the held-out test split
+    operating_point = None
     if args.use_spans:
+        # pick the aggregation (if 'auto') and threshold (if --target-precision) on validation
+        operating_point = select_span_operating_point(backbone, head, val_bundle, args, device, torch)
         # aggregate chunk scores to document predictions; document_bce stands in for test_loss
-        eval_result = evaluate_document_metrics(backbone, head, test_bundle, args, device, torch)
+        eval_result = evaluate_document_metrics(
+            backbone,
+            head,
+            test_bundle,
+            args,
+            device,
+            torch,
+            aggregation=operating_point["aggregation"],
+            response_threshold=operating_point["threshold"],
+        )
         y_pred = eval_result["y_pred"]
         y_score = eval_result["response_scores"]
         test_loss = eval_result["document_bce"]
@@ -508,6 +537,14 @@ def main() -> None:
         # span-mode only additions; the baseline payload stays byte-identical
         metrics_payload["span_config"] = span_config_payload(args)
         metrics_payload["span_coverage"] = build_audit
+        metrics_payload["operating_point"] = {
+            "requested_aggregation": args.aggregation,
+            "selected_aggregation": operating_point["aggregation"],
+            "aggregation_pr_auc": operating_point["aggregation_pr_auc"],
+            "target_precision": args.target_precision,
+            "tuned_threshold": operating_point["tuned_threshold"],
+            "selected_threshold": operating_point["threshold"],
+        }
 
     # only write the metrics JSON to disk when exporting is enabled
     metrics_path = None
