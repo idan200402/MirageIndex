@@ -543,6 +543,7 @@ def main() -> None:
             "aggregation_pr_auc": operating_point["aggregation_pr_auc"],
             "target_precision": args.target_precision,
             "tuned_threshold": operating_point["tuned_threshold"],
+            "objective": operating_point["objective"],
             "selected_threshold": operating_point["threshold"],
         }
 

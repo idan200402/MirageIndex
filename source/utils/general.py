@@ -94,9 +94,10 @@ def add_common_parsing(parser: argparse.ArgumentParser ) -> argparse.ArgumentPar
         type=float,
         default=None,
         help=(
-            "When set (0-1), tune --response-threshold on the validation split to the "
-            "lowest threshold reaching this precision (neural span models only). "
-            "Unset (default) keeps the fixed --response-threshold, so the baseline is unchanged."
+            "Optional precision-leaning override for neural span models: when set (0-1), "
+            "tune the decision threshold to the lowest value reaching this precision, but "
+            "fall back to the F1 point if that collapses recall. Unset (default) selects the "
+            "F1-maximizing threshold on the validation split, balancing precision and recall."
         ),
     )
 
@@ -239,51 +240,120 @@ def document_label(response_score: float, threshold: float, positive_label: str)
     return positive_label if response_score >= threshold else "no"
 
 
+def _precision_recall_at(
+    response_scores: list[float],
+    doc_labels: list[str],
+    threshold: float,
+    positive_label: str,
+) -> tuple[float | None, float]:
+    """Precision and recall of the (score >= threshold) rule on the tuning split.
+
+    Shared by the F1 and precision-target selectors so the confusion counting lives in one
+    place. Precision is None when nothing is predicted positive (undefined); recall is 0.0
+    when there are no positive documents.
+    """
+    true_positive = 0
+    predicted_positive = 0
+    positive_total = 0
+    for score, label in zip(response_scores, doc_labels):
+        is_positive = label == positive_label
+        positive_total += is_positive
+        if score >= threshold:
+            predicted_positive += 1
+            if is_positive:
+                true_positive += 1
+    precision = true_positive / predicted_positive if predicted_positive else None
+    recall = true_positive / positive_total if positive_total else 0.0
+    return precision, recall
+
+
+def pick_threshold_f1(
+    response_scores: list[float],
+    doc_labels: list[str],
+    positive_label: str = POSITIVE_LABEL,
+) -> float:
+    """Choose the decision threshold that maximizes validation F1 (the balanced default).
+
+    response_scores: aggregated per-document scores on the tuning (validation) split.
+    doc_labels: the matching document labels. positive_label: the label counted as positive.\\
+    Returns the candidate threshold (a distinct score) with the highest F1, ties broken
+    toward the smaller threshold / higher recall. Returns 0.5 when there is no positive
+    document to calibrate against. This rewards precision and recall jointly, so no model is
+    driven to a degenerate one-sided operating point.
+    """
+    if not any(label == positive_label for label in doc_labels):
+        return 0.5
+
+    best_threshold = 0.5
+    best_f1 = -1.0
+    # candidate thresholds are the distinct scores; predicting positive iff score >= t
+    for threshold in sorted(set(response_scores)):
+        precision, recall = _precision_recall_at(
+            response_scores, doc_labels, threshold, positive_label
+        )
+        if not precision or precision + recall == 0:
+            continue
+        f1 = 2 * precision * recall / (precision + recall)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = threshold
+    return best_threshold
+
+
 def pick_threshold(
     response_scores: list[float],
     doc_labels: list[str],
     target_precision: float,
     positive_label: str = POSITIVE_LABEL,
+    min_recall: float = 0.1,
 ) -> float:
-    """Choose the lowest decision threshold whose validation precision meets a target.
+    """Choose the lowest threshold meeting a precision target, guarded against collapse.
 
     response_scores: aggregated per-document scores on the tuning (validation) split.
     doc_labels: the matching document labels. target_precision: minimum precision in [0, 1].
-    positive_label: the label counted as positive.\\
-    Returns the SMALLEST candidate threshold (a distinct score) whose precision is
-    >= target_precision, which is the highest-recall operating point that still clears the
-    precision floor. When no threshold reaches the target, returns the threshold with the
-    highest precision (ties broken toward the smaller threshold / higher recall). Returns
-    0.5 when there is no positive document to calibrate against.
+    positive_label: the label counted as positive. min_recall: recall floor below which the
+    precision target is abandoned for the balanced F1 point.\\
+    Picks the SMALLEST candidate threshold (a distinct score) whose precision is
+    >= target_precision (the highest-recall point still clearing the floor); with no such
+    threshold it falls back to the most precise point. In either case, if the chosen point's
+    recall is below min_recall the precision target is degenerate for this model, so it
+    returns pick_threshold_f1 instead. Returns 0.5 when there is no positive document to
+    calibrate against. This is an opt-in override of the F1 default (see pick_threshold_f1).
     """
     if not any(label == positive_label for label in doc_labels):
         return 0.5
 
     # candidate thresholds are the distinct scores; predicting positive iff score >= t
-    candidates = sorted(set(response_scores))
+    chosen: float | None = None
     best_fallback_threshold = 0.5
     best_fallback_precision = -1.0
 
-    for threshold in candidates:
-        true_positive = 0
-        predicted_positive = 0
-        for score, label in zip(response_scores, doc_labels):
-            if score >= threshold:
-                predicted_positive += 1
-                if label == positive_label:
-                    true_positive += 1
-        if predicted_positive == 0:
+    for threshold in sorted(set(response_scores)):
+        precision, _ = _precision_recall_at(
+            response_scores, doc_labels, threshold, positive_label
+        )
+        if precision is None:
             continue
-        precision = true_positive / predicted_positive
         # the smallest threshold that clears the target wins outright (max recall)
         if precision >= target_precision:
-            return threshold
+            chosen = threshold
+            break
         # otherwise remember the most precise operating point as a fallback
         if precision > best_fallback_precision:
             best_fallback_precision = precision
             best_fallback_threshold = threshold
 
-    return best_fallback_threshold
+    if chosen is None:
+        chosen = best_fallback_threshold
+
+    # recall guard: a precision-pinned point is only useful if it still catches
+    # hallucinations. When even the max-recall qualifying threshold collapses recall below
+    # the floor, the balanced F1 point is strictly more useful, so fall back to it rather
+    # than reporting a degenerate high-precision / ~0-recall operating point.
+    _, recall = _precision_recall_at(response_scores, doc_labels, chosen, positive_label)
+    if recall < min_recall:
+        return pick_threshold_f1(response_scores, doc_labels, positive_label)
+    return chosen
 
 
 def select_best_aggregation(
