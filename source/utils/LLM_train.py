@@ -18,6 +18,7 @@ from source.utils.general import (
     document_label,
     group_scores_by_doc,
     pick_threshold,
+    pick_threshold_f1,
     select_best_aggregation,
 )
 
@@ -938,11 +939,13 @@ def select_span_operating_point(
     backbone / head: the trained model parts. val_bundle: the validation SpanBundle.
     args: supplies --aggregation, --top-k, --response-threshold and --target-precision.
     device / torch: injected deps.\\
-    Returns {"aggregation", "threshold", "aggregation_pr_auc", "tuned_threshold"}. The
-    validation chunk scores are computed once and reused: when --aggregation is 'auto' the
+    Returns {"aggregation", "threshold", "aggregation_pr_auc", "tuned_threshold", "objective"}.
+    The validation chunk scores are computed once and reused: when --aggregation is 'auto' the
     best of max/mean_topk/noisy_or is chosen by validation PR-AUC (else the requested method
-    is kept), then when --target-precision is set the threshold is tuned on validation to the
-    lowest value reaching that precision (else the fixed --response-threshold is kept).
+    is kept), then the threshold is tuned on validation. By default it maximizes F1 (balanced
+    precision and recall); when --target-precision is set it instead targets that precision,
+    falling back to the F1 point if the target would collapse recall. tuned_threshold is
+    always True in span mode and objective records which criterion was used.
     """
     scores = predict_chunk_scores(backbone, head, val_bundle.chunk_loader, device, torch)
     grouped_scores, grouped_spans = group_scores_by_doc(
@@ -961,21 +964,23 @@ def select_span_operating_point(
     else:
         method = args.aggregation
 
-    tuned_threshold = args.target_precision is not None
-    if tuned_threshold:
-        response_scores = [
-            aggregate_document_score(chunk_scores, method, args.top_k, chunk_spans=chunk_spans)
-            for chunk_scores, chunk_spans in zip(grouped_scores, grouped_spans)
-        ]
+    response_scores = [
+        aggregate_document_score(chunk_scores, method, args.top_k, chunk_spans=chunk_spans)
+        for chunk_scores, chunk_spans in zip(grouped_scores, grouped_spans)
+    ]
+    if args.target_precision is not None:
+        objective = "target_precision"
         threshold = pick_threshold(response_scores, val_bundle.doc_labels, args.target_precision)
     else:
-        threshold = args.response_threshold
+        objective = "f1"
+        threshold = pick_threshold_f1(response_scores, val_bundle.doc_labels)
 
     return {
         "aggregation": method,
         "threshold": threshold,
         "aggregation_pr_auc": aggregation_pr_auc,
-        "tuned_threshold": tuned_threshold,
+        "tuned_threshold": True,
+        "objective": objective,
     }
 
 
