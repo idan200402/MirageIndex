@@ -64,7 +64,12 @@ class MultinomialNaiveBayes:
         texts: raw documents to classify.\\
         Returns the argmax-log-probability label per document, in input order.
         """
-        return [max(self._log_probabilities(text), key=self._log_probabilities(text).get) for text in texts]
+        predictions = []
+        for text in texts:
+            # score the document once, then take the highest-log-probability label
+            log_probabilities = self._log_probabilities(text)
+            predictions.append(max(log_probabilities, key=log_probabilities.get))
+        return predictions
 
     def predict_positive_scores(self, texts: list[str], positive_label: str) -> list[float]:
         """Return the normalized probability of positive_label for each document.

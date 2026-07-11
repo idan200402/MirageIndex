@@ -5,7 +5,7 @@ import math
 from typing import Any
 
 # utility function imports
-from source.utils.training_metrics import parse_bool
+from source.utils.training_metrics import parse_bool, pr_auc
 from source.utils.text import build_chunk_examples, POSITIVE_LABEL
 # utility constant imports
 from source.utils.data import DEFAULT_DATA_PATH, DEFAULT_ARTIFACTS_DIR, DEFAULT_SEED, DEFAULT_TEST_SIZE
@@ -74,9 +74,13 @@ def add_common_parsing(parser: argparse.ArgumentParser ) -> argparse.ArgumentPar
     )
     parser.add_argument(
         "--aggregation",
-        choices=("max", "mean_topk", "noisy_or"),
-        default="max",
-        help="How chunk scores are aggregated to a document score at inference.",
+        choices=("auto", "max", "mean_topk", "noisy_or"),
+        default="auto",
+        help=(
+            "How chunk scores are aggregated to a document score at inference. "
+            "'auto' (default) selects the best of max/mean_topk/noisy_or on the validation "
+            "split by PR-AUC (neural models only; classical models fall back to max)."
+        ),
     )
     parser.add_argument("--top-k", type=int, default=3, help="K for the mean_topk aggregation.")
     parser.add_argument(
@@ -84,6 +88,17 @@ def add_common_parsing(parser: argparse.ArgumentParser ) -> argparse.ArgumentPar
         type=float,
         default=0.5,
         help="Decision threshold on the aggregated response score. Independent of --use-spans; always defined.",
+    )
+    parser.add_argument(
+        "--target-precision",
+        type=float,
+        default=None,
+        help=(
+            "Optional precision-leaning override for neural span models: when set (0-1), "
+            "tune the decision threshold to the lowest value reaching this precision, but "
+            "fall back to the F1 point if that collapses recall. Unset (default) selects the "
+            "F1-maximizing threshold on the validation split, balancing precision and recall."
+        ),
     )
 
     return parser
@@ -166,6 +181,11 @@ def aggregate_document_score(
     """
     if not chunk_scores:
         return 0.0
+    # 'auto' is resolved to a concrete method by the caller after validation selection;
+    # any residual 'auto' (training-time model selection, classical scoring) falls back to
+    # 'max', the previous default, so behavior stays well-defined and unchanged there.
+    if method == "auto":
+        method = "max"
     # clamp defensively so a stray out-of-range score cannot break the aggregation
     scores = [min(1.0, max(0.0, score)) for score in chunk_scores]
 
@@ -218,6 +238,156 @@ def document_label(response_score: float, threshold: float, positive_label: str)
     Returns positive_label when response_score >= threshold, else "no".
     """
     return positive_label if response_score >= threshold else "no"
+
+
+def _precision_recall_at(
+    response_scores: list[float],
+    doc_labels: list[str],
+    threshold: float,
+    positive_label: str,
+) -> tuple[float | None, float]:
+    """Precision and recall of the (score >= threshold) rule on the tuning split.
+
+    Shared by the F1 and precision-target selectors so the confusion counting lives in one
+    place. Precision is None when nothing is predicted positive (undefined); recall is 0.0
+    when there are no positive documents.
+    """
+    true_positive = 0
+    predicted_positive = 0
+    positive_total = 0
+    for score, label in zip(response_scores, doc_labels):
+        is_positive = label == positive_label
+        positive_total += is_positive
+        if score >= threshold:
+            predicted_positive += 1
+            if is_positive:
+                true_positive += 1
+    precision = true_positive / predicted_positive if predicted_positive else None
+    recall = true_positive / positive_total if positive_total else 0.0
+    return precision, recall
+
+
+def pick_threshold_f1(
+    response_scores: list[float],
+    doc_labels: list[str],
+    positive_label: str = POSITIVE_LABEL,
+) -> float:
+    """Choose the decision threshold that maximizes validation F1 (the balanced default).
+
+    response_scores: aggregated per-document scores on the tuning (validation) split.
+    doc_labels: the matching document labels. positive_label: the label counted as positive.\\
+    Returns the candidate threshold (a distinct score) with the highest F1, ties broken
+    toward the smaller threshold / higher recall. Returns 0.5 when there is no positive
+    document to calibrate against. This rewards precision and recall jointly, so no model is
+    driven to a degenerate one-sided operating point.
+    """
+    if not any(label == positive_label for label in doc_labels):
+        return 0.5
+
+    best_threshold = 0.5
+    best_f1 = -1.0
+    # candidate thresholds are the distinct scores; predicting positive iff score >= t
+    for threshold in sorted(set(response_scores)):
+        precision, recall = _precision_recall_at(
+            response_scores, doc_labels, threshold, positive_label
+        )
+        if not precision or precision + recall == 0:
+            continue
+        f1 = 2 * precision * recall / (precision + recall)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = threshold
+    return best_threshold
+
+
+def pick_threshold(
+    response_scores: list[float],
+    doc_labels: list[str],
+    target_precision: float,
+    positive_label: str = POSITIVE_LABEL,
+    min_recall: float = 0.1,
+) -> float:
+    """Choose the lowest threshold meeting a precision target, guarded against collapse.
+
+    response_scores: aggregated per-document scores on the tuning (validation) split.
+    doc_labels: the matching document labels. target_precision: minimum precision in [0, 1].
+    positive_label: the label counted as positive. min_recall: recall floor below which the
+    precision target is abandoned for the balanced F1 point.\\
+    Picks the SMALLEST candidate threshold (a distinct score) whose precision is
+    >= target_precision (the highest-recall point still clearing the floor); with no such
+    threshold it falls back to the most precise point. In either case, if the chosen point's
+    recall is below min_recall the precision target is degenerate for this model, so it
+    returns pick_threshold_f1 instead. Returns 0.5 when there is no positive document to
+    calibrate against. This is an opt-in override of the F1 default (see pick_threshold_f1).
+    """
+    if not any(label == positive_label for label in doc_labels):
+        return 0.5
+
+    # candidate thresholds are the distinct scores; predicting positive iff score >= t
+    chosen: float | None = None
+    best_fallback_threshold = 0.5
+    best_fallback_precision = -1.0
+
+    for threshold in sorted(set(response_scores)):
+        precision, _ = _precision_recall_at(
+            response_scores, doc_labels, threshold, positive_label
+        )
+        if precision is None:
+            continue
+        # the smallest threshold that clears the target wins outright (max recall)
+        if precision >= target_precision:
+            chosen = threshold
+            break
+        # otherwise remember the most precise operating point as a fallback
+        if precision > best_fallback_precision:
+            best_fallback_precision = precision
+            best_fallback_threshold = threshold
+
+    if chosen is None:
+        chosen = best_fallback_threshold
+
+    # recall guard: a precision-pinned point is only useful if it still catches
+    # hallucinations. When even the max-recall qualifying threshold collapses recall below
+    # the floor, the balanced F1 point is strictly more useful, so fall back to it rather
+    # than reporting a degenerate high-precision / ~0-recall operating point.
+    _, recall = _precision_recall_at(response_scores, doc_labels, chosen, positive_label)
+    if recall < min_recall:
+        return pick_threshold_f1(response_scores, doc_labels, positive_label)
+    return chosen
+
+
+def select_best_aggregation(
+    grouped_scores: list[list[float]],
+    grouped_spans: list[list[tuple[int, int]]],
+    doc_labels: list[str],
+    methods: tuple[str, ...],
+    top_k: int,
+    positive_label: str = POSITIVE_LABEL,
+) -> tuple[str, dict[str, float | None]]:
+    """Pick the aggregation method with the best validation PR-AUC.
+
+    grouped_scores / grouped_spans: per-document chunk scores and character spans, as
+    produced by ``group_scores_by_doc`` on the validation split. doc_labels: the document
+    labels. methods: candidate aggregation names to try (concrete, never 'auto'). top_k:
+    K for mean_topk. positive_label: the label counted as positive.\\
+    Returns (best_method, pr_auc_by_method): the method with the highest defined PR-AUC and
+    the PR-AUC of every candidate (None where undefined). Ties keep the earliest method, and
+    an all-undefined sweep falls back to the first candidate.
+    """
+    pr_auc_by_method: dict[str, float | None] = {}
+    best_method = methods[0]
+    best_pr_auc: float | None = None
+    for method in methods:
+        response_scores = [
+            aggregate_document_score(chunk_scores, method, top_k, chunk_spans=chunk_spans)
+            for chunk_scores, chunk_spans in zip(grouped_scores, grouped_spans)
+        ]
+        value = pr_auc(doc_labels, response_scores, positive_label)
+        pr_auc_by_method[method] = value
+        if value is not None and (best_pr_auc is None or value > best_pr_auc):
+            best_pr_auc = value
+            best_method = method
+    return best_method, pr_auc_by_method
 
 
 def group_scores_by_doc(

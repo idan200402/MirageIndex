@@ -271,7 +271,15 @@ def plot_training_curves(payloads: dict[str, dict[str, Any]]) -> plt.Figure:
         history = payload["training_history"]
         epochs = [entry["epoch"] for entry in history]
         train_loss = [entry.get("train_loss") for entry in history]
-        val_loss = [entry.get("val_loss") for entry in history]
+        # span-mode runs log the validation objective under "val_document_bce"
+        # (document-level BCE) rather than "val_loss"; fall back to it so the
+        # validation curve is not silently dropped for *_spans models.
+        val_loss = [
+            entry.get("val_loss", entry.get("val_document_bce"))
+            if entry.get("val_loss") is not None
+            else entry.get("val_document_bce")
+            for entry in history
+        ]
 
         # History may concatenate several learning-rate sweeps; plot against a
         # monotonic step index so the concatenation reads left-to-right.

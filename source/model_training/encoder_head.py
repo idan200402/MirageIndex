@@ -26,6 +26,7 @@ from source.utils.LLM_train import (
     require_torch_and_encoder_transformers,
     select_device,
     select_dtype,
+    select_span_operating_point,
     set_seed,
     split_llm_records,
     train_frozen_head_grid_search,
@@ -209,9 +210,21 @@ def main() -> None:
     training_history = search_result["training_history"]
 
     # evaluate the best head on the held-out test split
+    operating_point = None
     if args.use_spans:
+        # pick the aggregation (if 'auto') and threshold (if --target-precision) on validation
+        operating_point = select_span_operating_point(backbone, head, val_bundle, args, device, torch)
         # aggregate chunk scores to document predictions; document_bce stands in for test_loss
-        eval_result = evaluate_document_metrics(backbone, head, test_bundle, args, device, torch)
+        eval_result = evaluate_document_metrics(
+            backbone,
+            head,
+            test_bundle,
+            args,
+            device,
+            torch,
+            aggregation=operating_point["aggregation"],
+            response_threshold=operating_point["threshold"],
+        )
         y_pred = eval_result["y_pred"]
         y_score = eval_result["response_scores"]
         test_loss = eval_result["document_bce"]
@@ -266,6 +279,15 @@ def main() -> None:
         # span-mode only additions; the baseline payload stays byte-identical
         metrics_payload["span_config"] = span_config_payload(args)
         metrics_payload["span_coverage"] = build_audit
+        metrics_payload["operating_point"] = {
+            "requested_aggregation": args.aggregation,
+            "selected_aggregation": operating_point["aggregation"],
+            "aggregation_pr_auc": operating_point["aggregation_pr_auc"],
+            "target_precision": args.target_precision,
+            "tuned_threshold": operating_point["tuned_threshold"],
+            "objective": operating_point["objective"],
+            "selected_threshold": operating_point["threshold"],
+        }
 
     # only write the metrics JSON to disk when exporting is enabled
     metrics_path = None

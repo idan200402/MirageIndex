@@ -13,7 +13,14 @@ from source.utils.text import (
     build_train_chunk_examples,
     record_to_text,
 )
-from source.utils.general import aggregate_document_score, document_label, group_scores_by_doc
+from source.utils.general import (
+    aggregate_document_score,
+    document_label,
+    group_scores_by_doc,
+    pick_threshold,
+    pick_threshold_f1,
+    select_best_aggregation,
+)
 
 
 # a validation/test bundle for span-mode neural evaluation: a fixed-order chunk loader
@@ -111,6 +118,24 @@ def add_llm_training_args(
         parser.add_argument("--learning-rate", type=float, default=1e-3, help="Training learning rate.")
     parser.add_argument("--weight-decay", type=float, default=0.0, help="Optimizer weight decay.")
     parser.add_argument(
+        "--dropout",
+        type=float,
+        default=0.0,
+        help=(
+            "Dropout applied before the classification head in span mode (0 disables). "
+            "Regularizes the span runs; inert for the document-level baseline."
+        ),
+    )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=3,
+        help=(
+            "Early-stopping patience (epochs without val_document_bce improvement) in span "
+            "mode. 0 disables early stopping. Inert for the document-level baseline."
+        ),
+    )
+    parser.add_argument(
         "--device",
         default="auto",
         choices=("auto", "cpu", "cuda"),
@@ -177,6 +202,13 @@ def validate_llm_args(args: Any) -> None:
         raise ValueError("learning_rate must be greater than 0")
     if args.weight_decay < 0:
         raise ValueError("weight_decay must be greater than or equal to 0")
+    # dropout/patience are absent on models that skip add_llm_training_args, so guard them
+    if hasattr(args, "dropout") and not 0 <= args.dropout < 1:
+        raise ValueError("dropout must be in [0, 1)")
+    if hasattr(args, "patience") and args.patience < 0:
+        raise ValueError("patience must be greater than or equal to 0")
+    if getattr(args, "target_precision", None) is not None and not 0 <= args.target_precision <= 1:
+        raise ValueError("target_precision must be between 0 and 1")
 
 
 def set_seed(seed: int, torch: Any) -> None:
@@ -856,28 +888,115 @@ def document_bce(doc_scores: list[float], doc_labels: list[str], positive_label:
     return total / len(doc_scores)
 
 
-def evaluate_document_metrics(backbone: Any, head: Any, bundle: SpanBundle, args: Any, device: Any, torch: Any) -> dict[str, Any]:
+def evaluate_document_metrics(
+    backbone: Any,
+    head: Any,
+    bundle: SpanBundle,
+    args: Any,
+    device: Any,
+    torch: Any,
+    aggregation: str | None = None,
+    response_threshold: float | None = None,
+) -> dict[str, Any]:
     """Score a span bundle at the chunk level and aggregate to document predictions.
 
     backbone / head: the model parts. bundle: the SpanBundle to evaluate. args: supplies
-    the aggregation config. device / torch: injected deps.\\
+    the default aggregation config. device / torch: injected deps. aggregation /
+    response_threshold: optional overrides for the aggregation method and decision
+    threshold (default to the args values); the final test scoring passes the operating
+    point selected on validation, while training-time model selection passes neither.\\
     Returns {"response_scores", "y_pred", "document_bce"}. Shared by both validation
     (model selection by document_bce) and final test scoring (against document labels).
     """
+    method = aggregation if aggregation is not None else args.aggregation
+    threshold = response_threshold if response_threshold is not None else args.response_threshold
     scores = predict_chunk_scores(backbone, head, bundle.chunk_loader, device, torch)
     grouped_scores, grouped_spans = group_scores_by_doc(
         scores, bundle.chunk_spans, bundle.doc_index, bundle.n_docs
     )
     response_scores = [
-        aggregate_document_score(chunk_scores, args.aggregation, args.top_k, chunk_spans=chunk_spans)
+        aggregate_document_score(chunk_scores, method, args.top_k, chunk_spans=chunk_spans)
         for chunk_scores, chunk_spans in zip(grouped_scores, grouped_spans)
     ]
-    y_pred = [document_label(score, args.response_threshold, POSITIVE_LABEL) for score in response_scores]
+    y_pred = [document_label(score, threshold, POSITIVE_LABEL) for score in response_scores]
     return {
         "response_scores": response_scores,
         "y_pred": y_pred,
         "document_bce": document_bce(response_scores, bundle.doc_labels, POSITIVE_LABEL),
     }
+
+
+def select_span_operating_point(
+    backbone: Any,
+    head: Any,
+    val_bundle: SpanBundle,
+    args: Any,
+    device: Any,
+    torch: Any,
+) -> dict[str, Any]:
+    """Pick the aggregation method and decision threshold on the validation split.
+
+    backbone / head: the trained model parts. val_bundle: the validation SpanBundle.
+    args: supplies --aggregation, --top-k, --response-threshold and --target-precision.
+    device / torch: injected deps.\\
+    Returns {"aggregation", "threshold", "aggregation_pr_auc", "tuned_threshold", "objective"}.
+    The validation chunk scores are computed once and reused: when --aggregation is 'auto' the
+    best of max/mean_topk/noisy_or is chosen by validation PR-AUC (else the requested method
+    is kept), then the threshold is tuned on validation. By default it maximizes F1 (balanced
+    precision and recall); when --target-precision is set it instead targets that precision,
+    falling back to the F1 point if the target would collapse recall. tuned_threshold is
+    always True in span mode and objective records which criterion was used.
+    """
+    scores = predict_chunk_scores(backbone, head, val_bundle.chunk_loader, device, torch)
+    grouped_scores, grouped_spans = group_scores_by_doc(
+        scores, val_bundle.chunk_spans, val_bundle.doc_index, val_bundle.n_docs
+    )
+
+    aggregation_pr_auc: dict[str, float | None] | None = None
+    if args.aggregation == "auto":
+        method, aggregation_pr_auc = select_best_aggregation(
+            grouped_scores,
+            grouped_spans,
+            val_bundle.doc_labels,
+            ("max", "mean_topk", "noisy_or"),
+            args.top_k,
+        )
+    else:
+        method = args.aggregation
+
+    response_scores = [
+        aggregate_document_score(chunk_scores, method, args.top_k, chunk_spans=chunk_spans)
+        for chunk_scores, chunk_spans in zip(grouped_scores, grouped_spans)
+    ]
+    if args.target_precision is not None:
+        objective = "target_precision"
+        threshold = pick_threshold(response_scores, val_bundle.doc_labels, args.target_precision)
+    else:
+        objective = "f1"
+        threshold = pick_threshold_f1(response_scores, val_bundle.doc_labels)
+
+    return {
+        "aggregation": method,
+        "threshold": threshold,
+        "aggregation_pr_auc": aggregation_pr_auc,
+        "tuned_threshold": True,
+        "objective": objective,
+    }
+
+
+def build_span_head(nn: Any, hidden_size: int, dropout: float) -> Any:
+    """Build the span-mode classification head, optionally with input dropout.
+
+    nn: the injected torch.nn module. hidden_size: backbone hidden width. dropout: dropout
+    probability applied before the linear layer (0 disables it).\\
+    Returns nn.Linear(hidden_size, 1) when dropout is 0 (byte-identical to the baseline head)
+    or nn.Sequential(nn.Dropout(dropout), nn.Linear(hidden_size, 1)) when dropout > 0. Callers
+    toggle head.train()/head.eval(), so the dropout is active only during training.
+    """
+    linear = nn.Linear(hidden_size, 1)
+    if dropout and dropout > 0:
+        return nn.Sequential(nn.Dropout(dropout), linear)
+    return linear
 
 
 def train_frozen_head_grid_search_spans(
@@ -895,7 +1014,9 @@ def train_frozen_head_grid_search_spans(
 ) -> dict[str, Any]:
     """Grid-search learning rates for a frozen-backbone head in span mode.
 
-    Mirrors train_frozen_head_grid_search but (a) uses a pos_weight-weighted
+    Uses build_span_head so a nonzero --dropout regularizes the head, and early-stops each
+    learning rate on val_document_bce (see --patience). Mirrors train_frozen_head_grid_search
+    but (a) uses a pos_weight-weighted
     BCEWithLogitsLoss over the chunk train_loader, and (b) selects the best epoch/lr by
     the LOWEST document_bce from evaluate_document_metrics on the validation bundle
     instead of chunk validation loss. Saves the same checkpoint shape plus the chunk
@@ -926,13 +1047,17 @@ def train_frozen_head_grid_search_spans(
         freeze_module(backbone)
 
         hidden_size = backbone.config.hidden_size
-        head = nn.Linear(hidden_size, 1).to(device)
+        head = build_span_head(nn, hidden_size, args.dropout).to(device)
         optimizer = torch.optim.AdamW(
             head.parameters(),
             lr=learning_rate,
             weight_decay=args.weight_decay,
         )
 
+        # early stopping is per learning rate: stop this run once val_document_bce has not
+        # improved for `patience` epochs (patience 0 disables it, running every epoch)
+        run_best_bce = float("inf")
+        epochs_without_improvement = 0
         for epoch in range(1, args.epochs + 1):
             train_loss = train_one_epoch(
                 backbone,
@@ -978,6 +1103,16 @@ def train_frozen_head_grid_search_spans(
                 f"lr {learning_rate:g} epoch {epoch}: "
                 f"train_loss={train_loss:.4f} val_document_bce={val_document_bce:.4f}"
             )
+
+            # track improvement for early stopping and break once patience is exhausted
+            if val_document_bce < run_best_bce:
+                run_best_bce = val_document_bce
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+                if args.patience and epochs_without_improvement >= args.patience:
+                    print(f"lr {learning_rate:g}: early stopping at epoch {epoch}")
+                    break
 
         final_backbone = backbone
         final_head = head

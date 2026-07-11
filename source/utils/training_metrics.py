@@ -28,6 +28,12 @@ def project_relative_path(path: str | Path) -> str:
 
 
 def parse_bool(value: bool | str) -> bool:
+    """Coerce a command-line boolean-like value into a real bool.
+
+    value: either an actual bool or a string such as "true", "1", or "no".\\
+    Returns the parsed boolean, accepting (case-insensitively) true/1/yes/y and
+    false/0/no/n. Raises ValueError on any other string.
+    """
     if isinstance(value, bool):
         return value
 
@@ -46,6 +52,15 @@ def classification_metrics(
     y_score: Sequence[float],
     positive_label: str = "yes",
 ) -> dict[str, float | None]:
+    """Compute the standard binary-classification metrics for one evaluation.
+
+    y_true: the gold labels. y_pred: the hard predicted labels. y_score: the
+    positive-class scores used for the ranking metrics. positive_label: the label
+    counted as positive.\\
+    Returns a dict with accuracy, precision, recall, pr_auc, and roc_auc (the last
+    two may be None when undefined). Raises ValueError when the inputs differ in
+    length or are empty.
+    """
     if not (len(y_true) == len(y_pred) == len(y_score)):
         raise ValueError("y_true, y_pred, and y_score must have the same length")
     if not y_true:
@@ -69,6 +84,14 @@ def classification_metrics(
 
 
 def pr_auc(y_true: Sequence[str], y_score: Sequence[float], positive_label: str) -> float | None:
+    """Compute the area under the precision-recall curve from ranked scores.
+
+    y_true: the gold labels. y_score: the positive-class scores. positive_label: the
+    label counted as positive.\\
+    Returns the PR-AUC, accumulating precision over each recall step and treating
+    tied scores as one group. Returns None when there are no positive examples to
+    define recall.
+    """
     positive_total = sum(label == positive_label for label in y_true)
     if positive_total == 0:
         return None
@@ -103,6 +126,14 @@ def pr_auc(y_true: Sequence[str], y_score: Sequence[float], positive_label: str)
 
 
 def roc_auc(y_true: Sequence[str], y_score: Sequence[float], positive_label: str) -> float | None:
+    """Compute the area under the ROC curve as the rank-based win rate.
+
+    y_true: the gold labels. y_score: the positive-class scores. positive_label: the
+    label counted as positive.\\
+    Returns the ROC-AUC: the fraction of positive/negative score pairs the model
+    ranks correctly, counting exact ties as half. Returns None when either class is
+    absent.
+    """
     positives = [score for label, score in zip(y_true, y_score) if label == positive_label]
     negatives = [score for label, score in zip(y_true, y_score) if label != positive_label]
 
@@ -126,6 +157,14 @@ def export_metrics_json(
     artifacts_dir: Path = DEFAULT_ARTIFACTS_DIR,
     filename: str = "metrics.json",
 ) -> Path:
+    """Write a metrics payload to artifacts_dir/model_name/filename as JSON.
+
+    model_name: names the per-model artifact subdirectory. metrics: the payload to
+    serialize. artifacts_dir: root artifacts directory. filename: output file name.\\
+    Returns the path written. Creates the directory when missing, ensures a
+    trained_parameters key is present, and serializes with sorted keys and indentation
+    so exported files diff cleanly.
+    """
     output_dir = artifacts_dir / model_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -141,6 +180,13 @@ def maybe_export_metrics_json(
     metrics: dict[str, Any],
     artifacts_dir: Path = DEFAULT_ARTIFACTS_DIR,
 ) -> Path | None:
+    """Export the metrics JSON only when exporting is enabled.
+
+    enabled: whether to write anything at all. model_name, metrics, artifacts_dir:
+    forwarded to export_metrics_json.\\
+    Returns the written path when enabled, otherwise None, so callers can keep the
+    export decision on one line.
+    """
     if not enabled:
         return None
     return export_metrics_json(model_name=model_name, metrics=metrics, artifacts_dir=artifacts_dir)
