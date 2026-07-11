@@ -11,8 +11,8 @@ if str(PROJECT_ROOT) not in sys.path:
 # utility function imports
 from source.utils.training_metrics import classification_metrics, maybe_export_metrics_json, project_relative_path
 from source.utils.data import load_records, split_records, print_label_distribution
-from source.utils.text import tokenize, record_to_text
-from source.utils.general import add_common_parsing
+from source.utils.text import tokenize, record_to_text, build_train_chunk_examples
+from source.utils.general import add_common_parsing, spans_suffix, score_records_by_chunks, span_config_payload
 
 # utility constant imports
 from source.utils.data import LABEL_FIELD
@@ -64,7 +64,12 @@ class MultinomialNaiveBayes:
         texts: raw documents to classify.\\
         Returns the argmax-log-probability label per document, in input order.
         """
-        return [max(self._log_probabilities(text), key=self._log_probabilities(text).get) for text in texts]
+        predictions = []
+        for text in texts:
+            # score the document once, then take the highest-log-probability label
+            log_probabilities = self._log_probabilities(text)
+            predictions.append(max(log_probabilities, key=log_probabilities.get))
+        return predictions
 
     def predict_positive_scores(self, texts: list[str], positive_label: str) -> list[float]:
         """Return the normalized probability of positive_label for each document.
@@ -151,19 +156,35 @@ def main() -> None:
     a human-readable summary. Takes no arguments and returns nothing.
     """
     args = parse_args()
+    # fork artifacts to naive_bayes_spans in span mode; inert (suffix "") otherwise
+    args.model_name = args.model_name + spans_suffix(args)
     records = load_records(args.data)
     train_records, test_records = split_records(records, args.test_size, args.seed)
 
-    train_texts = [record_to_text(record) for record in train_records]
-    train_labels = [record[LABEL_FIELD] for record in train_records]
-    test_texts = [record_to_text(record) for record in test_records]
     y_true = [record[LABEL_FIELD] for record in test_records]
-
     model = MultinomialNaiveBayes(alpha=args.alpha)
-    model.fit(train_texts, train_labels)
+    build_audit = None
 
-    y_pred = model.predict(test_texts)
-    y_score = model.predict_positive_scores(test_texts, POSITIVE_LABEL)
+    if args.use_spans:
+        # chunk-level training: each response chunk is one document string (the query is
+        # dropped, being constant per doc), fed to the SAME NB estimator. No class weighting
+        # (intentional -- see blueprint).
+        _queries, chunks, chunk_labels, build_audit = build_train_chunk_examples(
+            train_records, args.chunk_window, args.chunk_stride, args.overlap_threshold
+        )
+        train_texts = list(chunks)
+        train_str_labels = [POSITIVE_LABEL if label == 1 else "no" for label in chunk_labels]
+        model.fit(train_texts, train_str_labels)
+        # NB needs no vectorizer, so score raw chunk text directly
+        y_score, y_pred = score_records_by_chunks(test_records, model, None, args)
+    else:
+        train_texts = [record_to_text(record) for record in train_records]
+        train_labels = [record[LABEL_FIELD] for record in train_records]
+        test_texts = [record_to_text(record) for record in test_records]
+        model.fit(train_texts, train_labels)
+        y_pred = model.predict(test_texts)
+        y_score = model.predict_positive_scores(test_texts, POSITIVE_LABEL)
+
     metrics = classification_metrics(y_true=y_true, y_pred=y_pred, y_score=y_score, positive_label=POSITIVE_LABEL)
     correct = sum(actual == predicted for actual, predicted in zip(y_true, y_pred))
 
@@ -186,6 +207,10 @@ def main() -> None:
         },
         "metrics": metrics,
     }
+    if args.use_spans:
+        # span-mode only additions; the baseline payload stays byte-identical
+        metrics_payload["span_config"] = span_config_payload(args)
+        metrics_payload["span_coverage"] = build_audit
     metrics_path = maybe_export_metrics_json(
         enabled=args.export_metrics,
         model_name=args.model_name,

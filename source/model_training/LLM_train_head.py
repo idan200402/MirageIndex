@@ -10,27 +10,32 @@ if str(PROJECT_ROOT) not in sys.path:
 # shared LLM training utility function imports
 from source.utils.LLM_train import (
     add_llm_training_args,
+    compute_pos_weight,
     copy_state_dict_to_cpu,
     count_parameters,
+    evaluate_document_metrics,
     evaluate_loss,
     freeze_module,
     load_backbone,
     make_dataloaders,
+    make_span_dataloaders,
     output_dir_for,
     predict,
     prepare_tokenizer,
     require_torch_and_transformers,
     select_device,
     select_dtype,
+    select_span_operating_point,
     set_seed,
     split_llm_records,
+    train_frozen_head_grid_search_spans,
     train_one_epoch,
     validate_llm_args,
 )
 
 # utility function and constant imports
 from source.utils.data import LABEL_FIELD, print_label_distribution
-from source.utils.general import add_common_parsing
+from source.utils.general import add_common_parsing, spans_suffix, span_config_payload
 from source.utils.text import POSITIVE_LABEL, TEXT_FIELDS
 from source.utils.training_metrics import classification_metrics, export_metrics_json, project_relative_path
 
@@ -69,6 +74,8 @@ def main() -> None:
     """
     args = parse_args()
     validate_llm_args(args)
+    # fork artifacts to LLM_train_head_spans in span mode; inert (suffix "") otherwise
+    args.model_name = args.model_name + spans_suffix(args)
     # torch and transformers are imported lazily so the script fails clearly when they are missing
     torch, nn, DataLoader, Dataset, AutoModelForCausalLM, AutoTokenizer = require_torch_and_transformers(MODEL_NAME)
     set_seed(args.seed, torch)
@@ -79,87 +86,160 @@ def main() -> None:
     head_train_records, val_records, test_records = split_llm_records(args)
 
     tokenizer = prepare_tokenizer(args.base_model, AutoTokenizer)
-    backbone = load_backbone(args.base_model, dtype, device, AutoModelForCausalLM)
-    # put the backbone in eval mode and freeze it so only the head is trained
-    backbone.eval()
-    freeze_module(backbone)
-
-    # a single linear head maps the pooled hidden state to one logit
-    hidden_size = backbone.config.hidden_size
-    head = nn.Linear(hidden_size, 1).to(device)
-    # only the head parameters are handed to the optimizer
-    optimizer = torch.optim.AdamW(head.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    loss_fn = nn.BCEWithLogitsLoss()
-
-    train_loader, val_loader, test_loader = make_dataloaders(
-        head_train_records,
-        val_records,
-        test_records,
-        tokenizer,
-        args,
-        torch,
-        DataLoader,
-        Dataset,
-    )
 
     output_dir = output_dir_for(args)
     if args.export_metrics:
         output_dir.mkdir(parents=True, exist_ok=True)
     best_head_path = output_dir / "best_head.pt"
-    # track the best head by validation loss across every epoch
-    best_val_loss = float("inf")
-    best_head_state = None
-    training_history = []
 
-    for epoch in range(1, args.epochs + 1):
-        # the backbone stays frozen so only the head is updated this epoch
-        train_loss = train_one_epoch(
+    # the held-out document labels are the A/B comparison target in both modes
+    y_true = [record[LABEL_FIELD] for record in test_records]
+    build_audit = None
+    operating_point = None
+
+    if args.use_spans:
+        # SPAN MODE: predict per (query, chunk) pair and aggregate to a document score.
+        # A single-element learning-rate tuple reuses the shared span grid search.
+        train_loader, val_bundle, test_bundle, train_labels, build_audit = make_span_dataloaders(
+            head_train_records,
+            val_records,
+            test_records,
+            tokenizer,
+            args,
+            torch,
+            DataLoader,
+            Dataset,
+        )
+        pos_weight = compute_pos_weight(train_labels, torch)
+
+        def make_backbone() -> object:
+            """Load a fresh frozen causal-LM backbone for the span grid search."""
+            return load_backbone(args.base_model, dtype, device, AutoModelForCausalLM)
+
+        search_result = train_frozen_head_grid_search_spans(
+            model_factory=make_backbone,
+            nn=nn,
+            torch=torch,
+            train_loader=train_loader,
+            val_bundle=val_bundle,
+            args=args,
+            device=device,
+            learning_rates=(args.learning_rate,),
+            pos_weight=pos_weight,
+            checkpoint_path=best_head_path,
+            checkpoint_metadata={
+                "base_model": args.base_model,
+                "positive_label": POSITIVE_LABEL,
+                "text_fields": list(TEXT_FIELDS),
+                "max_length": args.max_length,
+                "chunk_window": args.chunk_window,
+                "chunk_stride": args.chunk_stride,
+                "overlap_threshold": args.overlap_threshold,
+                "aggregation": args.aggregation,
+                "top_k": args.top_k,
+            },
+        )
+        backbone = search_result["backbone"]
+        head = search_result["head"]
+        hidden_size = search_result["hidden_size"] or backbone.config.hidden_size
+        best_val_loss = search_result["best_val_loss"]
+        training_history = search_result["training_history"]
+
+        # pick the aggregation (if 'auto') and threshold (if --target-precision) on validation
+        operating_point = select_span_operating_point(backbone, head, val_bundle, args, device, torch)
+        # aggregate chunk scores to document predictions for the test metric
+        eval_result = evaluate_document_metrics(
             backbone,
             head,
-            train_loader,
-            optimizer,
-            loss_fn,
+            test_bundle,
+            args,
             device,
-            train_backbone=False,
+            torch,
+            aggregation=operating_point["aggregation"],
+            response_threshold=operating_point["threshold"],
         )
-        val_loss = evaluate_loss(backbone, head, val_loader, loss_fn, device, torch)
-        training_history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
+        y_pred = eval_result["y_pred"]
+        y_score = eval_result["response_scores"]
+        # document_bce stands in for the baseline's test_loss in span mode
+        test_loss = eval_result["document_bce"]
+    else:
+        backbone = load_backbone(args.base_model, dtype, device, AutoModelForCausalLM)
+        # put the backbone in eval mode and freeze it so only the head is trained
+        backbone.eval()
+        freeze_module(backbone)
 
-        # keep the head that reached the lowest validation loss so far
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_head_state = copy_state_dict_to_cpu(head)
-            if args.export_metrics:
-                # persist the best head weights alongside the metadata needed to reload them
-                torch.save(
-                    {
-                        "head_state_dict": head.state_dict(),
-                        "base_model": args.base_model,
-                        "hidden_size": hidden_size,
-                        "positive_label": POSITIVE_LABEL,
-                        "text_fields": list(TEXT_FIELDS),
-                        "max_length": args.max_length,
-                        "epoch": epoch,
-                        "val_loss": val_loss,
-                    },
-                    best_head_path,
-                )
+        # a single linear head maps the pooled hidden state to one logit
+        hidden_size = backbone.config.hidden_size
+        head = nn.Linear(hidden_size, 1).to(device)
+        # only the head parameters are handed to the optimizer
+        optimizer = torch.optim.AdamW(head.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+        loss_fn = nn.BCEWithLogitsLoss()
 
-        print(f"epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
+        train_loader, val_loader, test_loader = make_dataloaders(
+            head_train_records,
+            val_records,
+            test_records,
+            tokenizer,
+            args,
+            torch,
+            DataLoader,
+            Dataset,
+        )
 
-    # restore the best in-memory head seen during training
-    if best_head_state is not None:
-        head.load_state_dict(best_head_state)
-    # prefer the exported checkpoint when metrics were exported to disk
-    if args.export_metrics and best_head_path.exists():
-        checkpoint = torch.load(best_head_path, map_location=device)
-        head.load_state_dict(checkpoint["head_state_dict"])
+        # track the best head by validation loss across every epoch
+        best_val_loss = float("inf")
+        best_head_state = None
+        training_history = []
 
-    # evaluate the restored head on the held-out test split
-    y_true = [record[LABEL_FIELD] for record in test_records]
-    y_pred, y_score = predict(backbone, head, test_loader, device, torch)
+        for epoch in range(1, args.epochs + 1):
+            # the backbone stays frozen so only the head is updated this epoch
+            train_loss = train_one_epoch(
+                backbone,
+                head,
+                train_loader,
+                optimizer,
+                loss_fn,
+                device,
+                train_backbone=False,
+            )
+            val_loss = evaluate_loss(backbone, head, val_loader, loss_fn, device, torch)
+            training_history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
+
+            # keep the head that reached the lowest validation loss so far
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_head_state = copy_state_dict_to_cpu(head)
+                if args.export_metrics:
+                    # persist the best head weights alongside the metadata needed to reload them
+                    torch.save(
+                        {
+                            "head_state_dict": head.state_dict(),
+                            "base_model": args.base_model,
+                            "hidden_size": hidden_size,
+                            "positive_label": POSITIVE_LABEL,
+                            "text_fields": list(TEXT_FIELDS),
+                            "max_length": args.max_length,
+                            "epoch": epoch,
+                            "val_loss": val_loss,
+                        },
+                        best_head_path,
+                    )
+
+            print(f"epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
+
+        # restore the best in-memory head seen during training
+        if best_head_state is not None:
+            head.load_state_dict(best_head_state)
+        # prefer the exported checkpoint when metrics were exported to disk
+        if args.export_metrics and best_head_path.exists():
+            checkpoint = torch.load(best_head_path, map_location=device)
+            head.load_state_dict(checkpoint["head_state_dict"])
+
+        # evaluate the restored head on the held-out test split
+        y_pred, y_score = predict(backbone, head, test_loader, device, torch)
+        test_loss = evaluate_loss(backbone, head, test_loader, loss_fn, device, torch)
+
     metrics = classification_metrics(y_true=y_true, y_pred=y_pred, y_score=y_score, positive_label=POSITIVE_LABEL)
-    test_loss = evaluate_loss(backbone, head, test_loader, loss_fn, device, torch)
     correct = sum(actual == predicted for actual, predicted in zip(y_true, y_pred))
 
     # gather the run configuration, trained parameters and metrics into one exportable payload
@@ -197,6 +277,19 @@ def main() -> None:
         },
         "metrics": metrics,
     }
+    if args.use_spans:
+        # span-mode only additions; the baseline payload stays byte-identical
+        metrics_payload["span_config"] = span_config_payload(args)
+        metrics_payload["span_coverage"] = build_audit
+        metrics_payload["operating_point"] = {
+            "requested_aggregation": args.aggregation,
+            "selected_aggregation": operating_point["aggregation"],
+            "aggregation_pr_auc": operating_point["aggregation_pr_auc"],
+            "target_precision": args.target_precision,
+            "tuned_threshold": operating_point["tuned_threshold"],
+            "objective": operating_point["objective"],
+            "selected_threshold": operating_point["threshold"],
+        }
 
     # only write the metrics JSON to disk when exporting is enabled
     metrics_path = None

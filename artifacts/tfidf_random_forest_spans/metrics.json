@@ -1,0 +1,53 @@
+{
+  "class_weight": 9.399361022364218,
+  "data_path": "data/general_data.json",
+  "metrics": {
+    "accuracy": 0.753607103218646,
+    "pr_auc": 0.3176406081912899,
+    "precision": 0.35766423357664234,
+    "recall": 0.2677595628415301,
+    "roc_auc": 0.6196211394736442
+  },
+  "model_name": "tfidf_random_forest_spans",
+  "seed": 42,
+  "span_config": {
+    "aggregation": "auto",
+    "chunk_stride": 20,
+    "chunk_window": 40,
+    "overlap_threshold": 0.25,
+    "response_threshold": 0.5,
+    "top_k": 3
+  },
+  "span_coverage": {
+    "negative_chunks": 11768,
+    "non_verbatim_span_rate": 0.12929848693259974,
+    "normalized_spans": 7,
+    "positive_chunks": 1252,
+    "positive_docs_all_negative": 0,
+    "unresolved_spans": 87,
+    "verbatim_spans": 633,
+    "yes_records_fallback_positive": 59,
+    "yes_records_meta_positive": 62,
+    "yes_records_resolved": 570,
+    "yes_records_total": 632,
+    "yes_records_zero_spans": 0
+  },
+  "test_examples": 901,
+  "test_size": 0.2,
+  "train_examples": 3606,
+  "trained_parameters": {
+    "max_depth": 20,
+    "max_features": 500,
+    "max_features_split": 32,
+    "min_df": 1,
+    "min_samples_split": 2,
+    "n_estimators": 50,
+    "positive_label": "yes",
+    "text_fields": [
+      "user_query",
+      "chatgpt_response"
+    ],
+    "tree_count": 50,
+    "vocabulary_size": 500
+  }
+}

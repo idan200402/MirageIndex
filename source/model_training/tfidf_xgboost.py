@@ -15,8 +15,15 @@ from source.utils.text import TfidfVectorizer
 # utility function imports
 from source.utils.training_metrics import classification_metrics, maybe_export_metrics_json, project_relative_path
 from source.utils.data import load_records, split_records, print_label_distribution
-from source.utils.text import record_to_text
-from source.utils.general import add_common_parsing, sigmoid
+from source.utils.text import record_to_text, build_train_chunk_examples
+from source.utils.general import (
+    add_common_parsing,
+    sigmoid,
+    spans_suffix,
+    score_records_by_chunks,
+    compute_class_weight_ratio,
+    span_config_payload,
+)
 
 # utility constant imports
 from source.utils.data import LABEL_FIELD
@@ -203,12 +210,14 @@ class XGBoost:
         self.trees: list[RegressionTree] = []
         self.base_score = 0.0
 
-    def fit(self, vectors: list[dict[int, float]], labels: list[int], feature_count: int) -> None:
+    def fit(self, vectors: list[dict[int, float]], labels: list[int], feature_count: int, class_weight: float = 1.0) -> None:
         """Train the boosted ensemble by fitting one tree per round to the loss gradients.
 
         vectors: sparse TF-IDF rows as {feature_index: weight} maps.
         labels: binary labels (1 = positive, 0 = negative), aligned with vectors.
-        feature_count: size of the vocabulary / feature space.\\
+        feature_count: size of the vocabulary / feature space.
+        class_weight: multiplier on the gradient/hessian contribution of positive-labeled
+        examples (1.0, the default, reproduces the unweighted baseline exactly).\\
         Returns nothing. \\
         The base score and fitted trees are stored on the instance.
         """
@@ -225,14 +234,23 @@ class XGBoost:
         positive_rate = sum(labels) / n
         positive_rate = min(max(positive_rate, 1e-6), 1 - 1e-6)
         self.base_score = math.log(positive_rate / (1 - positive_rate))
+        # positives carry class_weight, negatives carry 1.0; all-1.0 reproduces baseline
+        sample_weights = [class_weight if label == 1 else 1.0 for label in labels]
 
         # every sample starts at the base margin and accumulates each tree's contribution
         margins = [self.base_score] * n
         for m in range(self.n_estimators):
-            # first- and second-order derivatives of the logistic loss at the current margins
+            # first- and second-order derivatives of the logistic loss at the current margins,
+            # scaled per example so positive chunks weigh more in the boosting objective
             probabilities = [sigmoid(margin) for margin in margins]
-            gradients = [probability - label for probability, label in zip(probabilities, labels)]
-            hessians = [probability * (1 - probability) for probability in probabilities]
+            gradients = [
+                sample_weight * (probability - label)
+                for probability, label, sample_weight in zip(probabilities, labels, sample_weights)
+            ]
+            hessians = [
+                sample_weight * probability * (1 - probability)
+                for probability, sample_weight in zip(probabilities, sample_weights)
+            ]
 
             # each tree gets a distinct seed so its feature draws differ
             tree = RegressionTree(
@@ -313,18 +331,13 @@ def main() -> None:
     a human-readable summary. Takes no arguments and returns nothing.
     """
     args = parse_args()
+    # fork artifacts to tfidf_xgboost_spans in span mode; inert otherwise
+    args.model_name = args.model_name + spans_suffix(args)
     records = load_records(args.data)
     train_records, test_records = split_records(records, args.test_size, args.seed)
 
-    train_texts = [record_to_text(record) for record in train_records]
-    train_labels = [1 if record[LABEL_FIELD] == POSITIVE_LABEL else 0 for record in train_records]
-    test_texts = [record_to_text(record) for record in test_records]
     y_true = [record[LABEL_FIELD] for record in test_records]
-
     vectorizer = TfidfVectorizer(max_features=args.max_features, min_df=args.min_df)
-    train_vectors = vectorizer.fit_transform(train_texts)
-    test_vectors = vectorizer.transform(test_texts)
-
     model = XGBoost(
         n_estimators=args.n_estimators,
         max_depth=args.max_depth,
@@ -335,10 +348,30 @@ def main() -> None:
         gamma=args.gamma,
         seed=args.seed,
     )
-    model.fit(train_vectors, train_labels, feature_count=len(vectorizer.vocabulary))
+    build_audit = None
+    class_weight = 1.0
 
-    y_pred = model.predict(test_vectors)
-    y_score = model.predict_positive_scores(test_vectors)
+    if args.use_spans:
+        # chunk-level training: each response chunk is one TF-IDF document (the query is
+        # dropped, being constant per doc), scored by the same booster with positive-chunk weighting
+        _queries, chunks, chunk_labels, build_audit = build_train_chunk_examples(
+            train_records, args.chunk_window, args.chunk_stride, args.overlap_threshold
+        )
+        train_texts = list(chunks)
+        train_vectors = vectorizer.fit_transform(train_texts)
+        class_weight = compute_class_weight_ratio(chunk_labels)
+        model.fit(train_vectors, chunk_labels, feature_count=len(vectorizer.vocabulary), class_weight=class_weight)
+        y_score, y_pred = score_records_by_chunks(test_records, model, vectorizer, args)
+    else:
+        train_texts = [record_to_text(record) for record in train_records]
+        train_labels = [1 if record[LABEL_FIELD] == POSITIVE_LABEL else 0 for record in train_records]
+        test_texts = [record_to_text(record) for record in test_records]
+        train_vectors = vectorizer.fit_transform(train_texts)
+        test_vectors = vectorizer.transform(test_texts)
+        model.fit(train_vectors, train_labels, feature_count=len(vectorizer.vocabulary))
+        y_pred = model.predict(test_vectors)
+        y_score = model.predict_positive_scores(test_vectors)
+
     metrics = classification_metrics(y_true=y_true, y_pred=y_pred, y_score=y_score, positive_label=POSITIVE_LABEL)
     correct = sum(actual == predicted for actual, predicted in zip(y_true, y_pred))
 
@@ -368,6 +401,11 @@ def main() -> None:
         "trained_parameters": trained_parameters,
         "metrics": metrics,
     }
+    if args.use_spans:
+        # span-mode only additions; the baseline payload stays byte-identical
+        metrics_payload["span_config"] = span_config_payload(args)
+        metrics_payload["span_coverage"] = build_audit
+        metrics_payload["class_weight"] = class_weight
     metrics_path = maybe_export_metrics_json(
         enabled=args.export_metrics,
         model_name=args.model_name,
