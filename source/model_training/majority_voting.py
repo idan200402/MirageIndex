@@ -63,6 +63,9 @@ def main() -> None:
     and prints a human-readable summary. Takes no arguments and returns nothing.
     """
     args = parse_args()
+    # --use-spans and the other span arguments are accepted (they come from
+    # add_common_parsing) but intentionally ignored here: this baseline never inspects
+    # the response text, so it applies no spans_suffix and stays the fixed A/B reference.
     records = load_records(args.data)
     train_records, test_records = split_records(records, args.test_size, args.seed)
     # the only thing this baseline "learns" is the most common training label

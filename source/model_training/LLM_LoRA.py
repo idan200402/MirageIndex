@@ -13,11 +13,15 @@ if str(PROJECT_ROOT) not in sys.path:
 from source.utils.LLM_train import (
     add_learning_rate_grid_arg,
     add_llm_training_args,
+    build_span_head,
+    compute_pos_weight,
     count_parameters,
+    evaluate_document_metrics,
     evaluate_loss,
     freeze_module,
     load_backbone,
     make_dataloaders,
+    make_span_dataloaders,
     output_dir_for,
     parse_learning_rates,
     predict,
@@ -25,6 +29,7 @@ from source.utils.LLM_train import (
     require_torch_and_transformers,
     select_device,
     select_dtype,
+    select_span_operating_point,
     set_seed,
     split_llm_records,
     train_one_epoch,
@@ -33,7 +38,7 @@ from source.utils.LLM_train import (
 
 # utility function and constant imports
 from source.utils.data import LABEL_FIELD, print_label_distribution
-from source.utils.general import add_common_parsing
+from source.utils.general import add_common_parsing, spans_suffix, span_config_payload
 from source.utils.text import POSITIVE_LABEL, TEXT_FIELDS
 from source.utils.training_metrics import classification_metrics, export_metrics_json, project_relative_path
 
@@ -267,6 +272,8 @@ def main() -> None:
     """
     args = parse_args()
     validate_lora_args(args)
+    # fork artifacts to LLM_LoRA_spans in span mode; inert (suffix "") otherwise
+    args.model_name = args.model_name + spans_suffix(args)
     # torch and transformers are imported lazily so missing dependencies fail clearly
     torch, nn, DataLoader, Dataset, AutoModelForCausalLM, AutoTokenizer = require_torch_and_transformers(MODEL_NAME)
     set_seed(args.seed, torch)
@@ -280,22 +287,44 @@ def main() -> None:
     lora_train_records, val_records, test_records = split_llm_records(args)
 
     tokenizer = prepare_tokenizer(args.base_model, AutoTokenizer)
-    train_loader, val_loader, test_loader = make_dataloaders(
-        lora_train_records,
-        val_records,
-        test_records,
-        tokenizer,
-        args,
-        torch,
-        DataLoader,
-        Dataset,
-    )
-    loss_fn = nn.BCEWithLogitsLoss()
 
     output_dir = output_dir_for(args)
     if args.export_metrics:
         output_dir.mkdir(parents=True, exist_ok=True)
     best_lora_path = output_dir / "best_lora_head.pt"
+
+    # the held-out document labels are the A/B comparison target in both modes
+    y_true = [record[LABEL_FIELD] for record in test_records]
+    build_audit = None
+
+    # span mode swaps the document dataloaders for chunk loaders/bundles and adds a
+    # pos_weight to the loss; the grid loop below is otherwise structurally identical
+    if args.use_spans:
+        train_loader, val_bundle, test_bundle, train_labels, build_audit = make_span_dataloaders(
+            lora_train_records,
+            val_records,
+            test_records,
+            tokenizer,
+            args,
+            torch,
+            DataLoader,
+            Dataset,
+        )
+        pos_weight = compute_pos_weight(train_labels, torch)
+        loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    else:
+        train_loader, val_loader, test_loader = make_dataloaders(
+            lora_train_records,
+            val_records,
+            test_records,
+            tokenizer,
+            args,
+            torch,
+            DataLoader,
+            Dataset,
+        )
+        loss_fn = nn.BCEWithLogitsLoss()
+
     # track the best adapter and head configuration by validation loss across the grid
     best_val_loss = float("inf")
     best_head_state = None
@@ -326,9 +355,10 @@ def main() -> None:
             dropout=args.lora_dropout,
         )
 
-        # a single linear head maps the pooled hidden state to one logit
+        # a single linear head maps the pooled hidden state to one logit; span mode can
+        # regularize it with --dropout, while the baseline stays a plain Linear
         hidden_size = backbone.config.hidden_size
-        head = nn.Linear(hidden_size, 1).to(device)
+        head = build_span_head(nn, hidden_size, args.dropout if args.use_spans else 0.0).to(device)
         # the optimizer only sees the LoRA adapter and head parameters, not the frozen weights
         optimizer = torch.optim.AdamW(
             trainable_parameters(backbone, head),
@@ -336,6 +366,9 @@ def main() -> None:
             weight_decay=args.weight_decay,
         )
 
+        # early stopping (span mode only) tracks val improvement per learning rate
+        run_best_val = float("inf")
+        epochs_without_improvement = 0
         for epoch in range(1, args.epochs + 1):
             # train_backbone=True lets gradients flow into the LoRA adapters inside the backbone
             train_loss = train_one_epoch(
@@ -347,7 +380,12 @@ def main() -> None:
                 device,
                 train_backbone=True,
             )
-            val_loss = evaluate_loss(backbone, head, val_loader, loss_fn, device, torch)
+            # span mode selects on the document-level aggregation (document_bce); the
+            # baseline selects on the plain chunk-free validation loss
+            if args.use_spans:
+                val_loss = evaluate_document_metrics(backbone, head, val_bundle, args, device, torch)["document_bce"]
+            else:
+                val_loss = evaluate_loss(backbone, head, val_loader, loss_fn, device, torch)
             training_history.append(
                 {
                     "learning_rate": learning_rate,
@@ -365,31 +403,51 @@ def main() -> None:
                 best_lora_state = trainable_state_dict(backbone)
                 if args.export_metrics:
                     # persist the best head and adapter weights with the metadata needed to reload them
-                    torch.save(
-                        {
-                            "head_state_dict": head.state_dict(),
-                            "lora_state_dict": best_lora_state,
-                            "base_model": args.base_model,
-                            "hidden_size": hidden_size,
-                            "positive_label": POSITIVE_LABEL,
-                            "text_fields": list(TEXT_FIELDS),
-                            "max_length": args.max_length,
-                            "learning_rate": learning_rate,
-                            "lora_r": args.lora_r,
-                            "lora_alpha": args.lora_alpha,
-                            "lora_dropout": args.lora_dropout,
-                            "lora_target_modules": list(target_modules),
-                            "replaced_modules": replaced_modules,
-                            "epoch": epoch,
-                            "val_loss": val_loss,
-                        },
-                        best_lora_path,
-                    )
+                    checkpoint_payload = {
+                        "head_state_dict": head.state_dict(),
+                        "lora_state_dict": best_lora_state,
+                        "base_model": args.base_model,
+                        "hidden_size": hidden_size,
+                        "positive_label": POSITIVE_LABEL,
+                        "text_fields": list(TEXT_FIELDS),
+                        "max_length": args.max_length,
+                        "learning_rate": learning_rate,
+                        "lora_r": args.lora_r,
+                        "lora_alpha": args.lora_alpha,
+                        "lora_dropout": args.lora_dropout,
+                        "lora_target_modules": list(target_modules),
+                        "replaced_modules": replaced_modules,
+                        "epoch": epoch,
+                        "val_loss": val_loss,
+                    }
+                    if args.use_spans:
+                        # record the chunk config so the checkpoint is self-describing
+                        checkpoint_payload.update(
+                            {
+                                "chunk_window": args.chunk_window,
+                                "chunk_stride": args.chunk_stride,
+                                "overlap_threshold": args.overlap_threshold,
+                                "aggregation": args.aggregation,
+                                "top_k": args.top_k,
+                            }
+                        )
+                    torch.save(checkpoint_payload, best_lora_path)
 
             print(
                 f"lr {learning_rate:g} epoch {epoch}: "
                 f"train_loss={train_loss:.4f} val_loss={val_loss:.4f}"
             )
+
+            # early stopping on the validation metric; span mode only so the baseline
+            # keeps running every epoch (byte-identical)
+            if val_loss < run_best_val:
+                run_best_val = val_loss
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+                if args.use_spans and args.patience and epochs_without_improvement >= args.patience:
+                    print(f"lr {learning_rate:g}: early stopping at epoch {epoch}")
+                    break
 
     # restore the best in-memory head and adapter weights seen during the grid search
     if best_head_state is not None:
@@ -403,10 +461,29 @@ def main() -> None:
         load_partial_state_dict(backbone, checkpoint["lora_state_dict"])
 
     # evaluate the restored configuration on the held-out test split
-    y_true = [record[LABEL_FIELD] for record in test_records]
-    y_pred, y_score = predict(backbone, head, test_loader, device, torch)
+    operating_point = None
+    if args.use_spans:
+        # pick the aggregation (if 'auto') and threshold (if --target-precision) on validation
+        operating_point = select_span_operating_point(backbone, head, val_bundle, args, device, torch)
+        # aggregate chunk scores to document predictions; document_bce stands in for test_loss
+        eval_result = evaluate_document_metrics(
+            backbone,
+            head,
+            test_bundle,
+            args,
+            device,
+            torch,
+            aggregation=operating_point["aggregation"],
+            response_threshold=operating_point["threshold"],
+        )
+        y_pred = eval_result["y_pred"]
+        y_score = eval_result["response_scores"]
+        test_loss = eval_result["document_bce"]
+    else:
+        y_pred, y_score = predict(backbone, head, test_loader, device, torch)
+        test_loss = evaluate_loss(backbone, head, test_loader, loss_fn, device, torch)
+
     metrics = classification_metrics(y_true=y_true, y_pred=y_pred, y_score=y_score, positive_label=POSITIVE_LABEL)
-    test_loss = evaluate_loss(backbone, head, test_loader, loss_fn, device, torch)
     correct = sum(actual == predicted for actual, predicted in zip(y_true, y_pred))
 
     # count the adapter and head parameters that were actually trained
@@ -456,6 +533,19 @@ def main() -> None:
         },
         "metrics": metrics,
     }
+    if args.use_spans:
+        # span-mode only additions; the baseline payload stays byte-identical
+        metrics_payload["span_config"] = span_config_payload(args)
+        metrics_payload["span_coverage"] = build_audit
+        metrics_payload["operating_point"] = {
+            "requested_aggregation": args.aggregation,
+            "selected_aggregation": operating_point["aggregation"],
+            "aggregation_pr_auc": operating_point["aggregation_pr_auc"],
+            "target_precision": args.target_precision,
+            "tuned_threshold": operating_point["tuned_threshold"],
+            "objective": operating_point["objective"],
+            "selected_threshold": operating_point["threshold"],
+        }
 
     # only write the metrics JSON to disk when exporting is enabled
     metrics_path = None

@@ -1,0 +1,59 @@
+{
+  "alpha": 1.0,
+  "data_path": "data/general_data.json",
+  "metrics": {
+    "accuracy": 0.7158712541620422,
+    "pr_auc": 0.27514651492349873,
+    "precision": 0.3302325581395349,
+    "recall": 0.3879781420765027,
+    "roc_auc": 0.6147769304534454
+  },
+  "model_name": "naive_bayes_spans",
+  "seed": 42,
+  "span_config": {
+    "aggregation": "auto",
+    "chunk_stride": 20,
+    "chunk_window": 40,
+    "overlap_threshold": 0.25,
+    "response_threshold": 0.5,
+    "top_k": 3
+  },
+  "span_coverage": {
+    "negative_chunks": 11768,
+    "non_verbatim_span_rate": 0.12929848693259974,
+    "normalized_spans": 7,
+    "positive_chunks": 1252,
+    "positive_docs_all_negative": 0,
+    "unresolved_spans": 87,
+    "verbatim_spans": 633,
+    "yes_records_fallback_positive": 59,
+    "yes_records_meta_positive": 62,
+    "yes_records_resolved": 570,
+    "yes_records_total": 632,
+    "yes_records_zero_spans": 0
+  },
+  "test_examples": 901,
+  "test_size": 0.2,
+  "text_fields": [
+    "user_query",
+    "chatgpt_response"
+  ],
+  "train_examples": 3606,
+  "trained_parameters": {
+    "alpha": 1.0,
+    "label_counts": {
+      "no": 11768,
+      "yes": 1252
+    },
+    "labels": [
+      "no",
+      "yes"
+    ],
+    "total_tokens_by_label": {
+      "no": 439640,
+      "yes": 45796
+    },
+    "vocabulary_size": 19449
+  },
+  "vocabulary_size": 19449
+}
