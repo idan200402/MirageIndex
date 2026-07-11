@@ -6,10 +6,10 @@
   "best_val_loss": 0.44919809378558373,
   "data_path": "data/general_data.json",
   "metrics": {
-    "accuracy": 0.7891231964483907,
+    "accuracy": 0.7358490566037735,
     "pr_auc": 0.34751080302391174,
-    "precision": 0.4,
-    "recall": 0.07650273224043716,
+    "precision": 0.37777777777777777,
+    "recall": 0.4644808743169399,
     "roc_auc": 0.6794906921168394
   },
   "model_name": "LLM_train_head_spans",
@@ -19,10 +19,11 @@
       "mean_topk": 0.3221994228153597,
       "noisy_or": 0.3324278408329673
     },
+    "objective": "f1",
     "requested_aggregation": "auto",
     "selected_aggregation": "max",
-    "selected_threshold": 0.8525334596633911,
-    "target_precision": 0.6,
+    "selected_threshold": 0.3183654844760895,
+    "target_precision": null,
     "tuned_threshold": true
   },
   "seed": 42,

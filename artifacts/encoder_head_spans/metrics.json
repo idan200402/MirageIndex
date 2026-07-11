@@ -8,10 +8,10 @@
   "best_val_loss": 0.48470126354493176,
   "data_path": "data/general_data.json",
   "metrics": {
-    "accuracy": 0.7980022197558269,
+    "accuracy": 0.7691453940066593,
     "pr_auc": 0.4148387692342404,
-    "precision": 1.0,
-    "recall": 0.00546448087431694,
+    "precision": 0.4293785310734463,
+    "recall": 0.41530054644808745,
     "roc_auc": 0.6922081678006606
   },
   "model_name": "encoder_head_spans",
@@ -21,10 +21,11 @@
       "mean_topk": 0.3610150261264968,
       "noisy_or": 0.3323252542250505
     },
+    "objective": "f1",
     "requested_aggregation": "auto",
     "selected_aggregation": "mean_topk",
-    "selected_threshold": 0.9140227635701498,
-    "target_precision": 0.6,
+    "selected_threshold": 0.4566970964272817,
+    "target_precision": null,
     "tuned_threshold": true
   },
   "seed": 42,

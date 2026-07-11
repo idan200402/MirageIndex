@@ -7,10 +7,10 @@
   "best_val_loss": 0.5296953632367052,
   "data_path": "data/general_data.json",
   "metrics": {
-    "accuracy": 0.8002219755826859,
+    "accuracy": 0.781354051054384,
     "pr_auc": 0.37670865300379597,
-    "precision": 0.5384615384615384,
-    "recall": 0.11475409836065574,
+    "precision": 0.4444444444444444,
+    "recall": 0.30601092896174864,
     "roc_auc": 0.6773216433018251
   },
   "model_name": "LLM_LoRA_spans",
@@ -20,10 +20,11 @@
       "mean_topk": 0.3711268569741805,
       "noisy_or": 0.3789257231499193
     },
+    "objective": "f1",
     "requested_aggregation": "auto",
     "selected_aggregation": "max",
-    "selected_threshold": 0.9228799939155579,
-    "target_precision": 0.6,
+    "selected_threshold": 0.7669345140457153,
+    "target_precision": null,
     "tuned_threshold": true
   },
   "seed": 42,
