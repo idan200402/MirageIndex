@@ -1,0 +1,207 @@
+examples: 4507
+fields: ID, chatgpt_response, hallucination, hallucination_spans, user_query
+features: chatgpt_response, user_query
+label field: hallucination
+
+Feature Statistics
+------------------
+chatgpt_response:
+  types: str=4507
+  missing: 0
+  non_empty: 4507
+  chars: min=57, avg=497.98, max=1449
+  words_avg: 81.96
+user_query:
+  types: str=4507
+  missing: 0
+  non_empty: 4507
+  chars: min=1, avg=75.95, max=1316
+  words_avg: 12.89
+
+Label Distribution
+------------------
+no: 3692 (81.92%)
+yes: 815 (18.08%)
+
+Hallucination Span Summary
+--------------------------
+examples_with_spans: 802
+total_spans: 941
+
+Span Count Distribution
+-----------------------
+0: 3705 (82.21%)
+1: 676 (15.00%)
+2: 113 (2.51%)
+3: 13 (0.29%)
+
+Full 'yes' Examples (first 3)
+----------------------------
+
+Example 1
+ID: 2
+label: yes
+user_query:
+Provide a few examples of homophones.
+chatgpt_response:
+1. allowed (permitted) and aloud (out loud)
+2. weather (condition of the atmosphere) and whether (expressing a doubt or choice)
+3. gate (entrance) and gait (way of walking)
+4. their (belonging to them) and there (in that place)
+5. pair (two of a kind) and pear (a fruit)
+6. hear (to perceive sound) and here (in this place)
+7. to (preposition indicating direction or action) and too (also, very)
+8. knight (medieval soldier) and night (period of darkness)
+9. sale (discounted price) and sail (propelling a boat)
+10. here (in this place) and hear (perceive sound)
+hallucination_spans_count: 1
+hallucination_spans:
+[1] 6. hear (to perceive sound) and here (in this place)
+10. here (in this place) and hear (perceive sound)
+
+Example 2
+ID: 3
+label: yes
+user_query:
+Create a chart outlining the world's population from 2000-2015.
+chatgpt_response:
+Unfortunately, as an AI language model, I cannot create charts or graphs. However, below is a table showing the global population from 2000 to 2015:
+
+| Year | Population (in billions) |
+|------|--------------------------|
+| 2000 | 6.126                    |
+| 2001 | 6.202                       |
+| 2002 | 6.28                         |
+| 2003 | 6.357                       |
+| 2004 | 6.435                       |
+| 2005 | 6.514                       |
+| 2006 | 6.593                       |
+| 2007 | 6.673                       |
+| 2008 | 6.754                       |
+| 2009 | 6.835                       |
+| 2010 | 6.917                       |
+| 2011 | 7.001                       |
+| 2012 | 7.086                       |
+| 2013 | 7.172                       |
+| 2014 | 7.259                       |
+| 2015 | 7.347                       |
+
+Note: All population data is taken from the United Nations Department of Economic and Social Affairs' Population Division.
+hallucination_spans_count: 1
+hallucination_spans:
+[1] | Year | Population (in billions) |
+|------|--------------------------|
+| 2000 | 6.126                    |
+| 2001 | 6.202                       |
+| 2002 | 6.28                         |
+| 2003 | 6.357                       |
+| 2004 | 6.435                       |
+| 2005 | 6.514                       |
+| 2006 | 6.593                       |
+| 2007 | 6.673                       |
+| 2008 | 6.754                       |
+| 2009 | 6.835                       |
+| 2010 | 6.917                       |
+| 2011 | 7.001                       |
+| 2012 | 7.086                       |
+| 2013 | 7.172                       |
+| 2014 | 7.259                       |
+| 2015 | 7.347                       |
+
+Example 3
+ID: 4
+label: yes
+user_query:
+Design a shape with 10 vertices (corners).
+chatgpt_response:
+Here is an example of a shape with 10 vertices:
+
+```
+      /\
+     /  \
+    /____\
+  /\     /\
+ /  \   /  \
+/____\ /____\
+\    / \    /
+ \  /   \  /
+  \/____\/
+```
+
+This shape is a decagon, which is a polygon with 10 sides and 10 vertices. It has five pairs of parallel sides and five angles of 144 degrees. The shape can be made with two pentagons overlapping each other.
+hallucination_spans_count: 1
+hallucination_spans:
+[1] ```
+      /\
+     /  \
+    /____\
+  /\     /\
+ /  \   /  \
+/____\ /____\
+\    / \    /
+ \  /   \  /
+  \/____\/
+```
+
+This shape is a decagon, which is a polygon with 10 sides and 10 vertices. It has five pairs of parallel sides and five angles of 144 degrees. The shape can be made with two pentagons overlapping each other.
+
+Full 'no' Examples (first 3)
+----------------------------
+
+Example 1
+ID: 1
+label: no
+user_query:
+Produce a list of common words in the English language.
+chatgpt_response:
+the, a, and, to, in, that, is, it, of, for, with, was, on, be, by, at, as, but, from, this, have, or, not, are, they, all, an, their, one, has, been, would, who, which, there, if, will, when, can, more, most, no, other, so, about, like, some, into, its, time, up, out, go, could, than, only, these, also, now, him, how, then, make, two, way, been, our, first, thing, may, after, too, any, day, never, same, last, long, even, new, must, here, every, such, own, down, man, people, way, little, much, world, know, good, year, take, come, us, many, again, find, much, just, see, use, get, through, back, well, still, before, without, while, between, life, go, own, off, mean, keep, own, another, put, however, almost, began, interest, show,
+hallucination_spans_count: 0
+
+Example 2
+ID: 6
+label: no
+user_query:
+Design a web page that allows a user to sign up for an email list.
+chatgpt_response:
+Header:
+- Logo of the email service provider
+- Sign-up page title "Join Our Announcements List"
+
+Body:
+- A form to collect user information
+     - Name: _____________
+     - Email: ______________
+     - Phone: _______________ (optional)
+     - Checkbox for agreeing to terms and conditions
+
+- A "submit" button below the form
+
+Sidebar:
+- Brief description of the kind of announcements subscribers can expect to receive
+- A call-to-action button encouraging visitors to create an account with the email service provider
+
+Footer:
+- A navigation menu with links to other pages
+- A copyright notice
+- Social media links to follow the provider on various platforms
+
+Note: the design elements of the page can change based on the preferences of individual site owners.
+hallucination_spans_count: 0
+
+Example 3
+ID: 8
+label: no
+user_query:
+Name a few members of the LGBTQ+ community
+chatgpt_response:
+1. Ellen DeGeneres
+2. Neil Patrick Harris
+3. Laverne Cox
+4. RuPaul
+5. Billy Porter
+6. Anderson Cooper
+7. Janelle Monáe
+8. Rosie O'Donnell
+9. Sam Smith
+10. Cynthia Nixon
+hallucination_spans_count: 0

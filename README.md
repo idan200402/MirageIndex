@@ -14,14 +14,14 @@ writes those metrics to `artifacts/<model_name>/metrics.json`.
 
 The **classical models are pure standard-library** implementations (the TF-IDF
 vectorizer, Naive Bayes, logistic regression, random forest, and XGBoost-style
-booster are all written from scratch in `source/`). Only the three neural models
+booster are all written from scratch in `source/`). Only the four neural models
 depend on PyTorch.
 
 ## Requirements
 
 - Python 3.12
 - Classical models + `plot_stats.py`: **no third-party packages**.
-- Neural models (`encoder_head`, `LLM_train_head`, `LLM_LoRA`): `torch`,
+- Neural models (`encoder_head`, `encoder_LoRA`, `LLM_train_head`, `LLM_LoRA`): `torch`,
   `transformers` (models are pulled from the Hugging Face Hub on first run).
 - `plot_artifacts.py`: `matplotlib`.
 
@@ -58,6 +58,7 @@ pip install torch transformers matplotlib
 | `tfidf_random_forest.py` | TF-IDF + random forest. | stdlib |
 | `tfidf_xgboost.py` | TF-IDF + gradient-boosted trees. | stdlib |
 | `encoder_head.py` | Linear head on a frozen ModernBERT encoder. | torch |
+| `encoder_LoRA.py` | LoRA adapters + head on ModernBERT attention projections. | torch |
 | `LLM_train_head.py` | Linear head on a frozen Qwen backbone. | torch |
 | `LLM_LoRA.py` | LoRA adapters + head on Qwen (adapters hand-rolled). | torch |
 
@@ -80,6 +81,7 @@ python source\model_training\tfidf_xgboost.py --export-metrics True
 
 # neural models (require torch + transformers)
 python source\model_training\encoder_head.py --export-metrics True
+python source\model_training\encoder_LoRA.py --export-metrics True
 python source\model_training\LLM_train_head.py --export-metrics True
 python source\model_training\LLM_LoRA.py --export-metrics True
 ```
@@ -87,7 +89,8 @@ python source\model_training\LLM_LoRA.py --export-metrics True
 Common flags (all models): `--data`, `--seed`, `--test-size`, `--export-metrics`,
 `--artifacts-dir`. Neural models add `--base-model`, `--max-length`,
 `--batch-size`, `--epochs`, `--learning-rate`, `--weight-decay`, `--dropout`,
-`--patience`; `LLM_LoRA` adds `--lora-r`, `--lora-alpha`, `--lora-dropout`.
+`--patience`; `encoder_LoRA` and `LLM_LoRA` add `--lora-r`, `--lora-alpha`,
+`--lora-dropout`, and `--lora-target-modules`.
 
 ## Visualizing Results
 
@@ -141,15 +144,16 @@ overlap, and a `yes` document whose spans never resolve (meta-annotations like
 | `--response-threshold` | `0.5` | Fixed decision threshold on the aggregated score. |
 | `--target-precision` | unset | **Neural only.** Tune the threshold to a precision target (falling back to the F1 point if recall collapses). |
 
-Neural models (`encoder_head`, `LLM_train_head`, `LLM_LoRA`) have a train/val/test
-split, so in span mode they auto-select their aggregation and decision threshold
-(F1-maximizing on validation by default) and record it in an `operating_point`
-block. Classical models have no validation split and are deliberately left at
-`max` / `0.5`.
+Neural models (`encoder_head`, `encoder_LoRA`, `LLM_train_head`, `LLM_LoRA`) have
+a train/val/test split, so in span mode they auto-select their aggregation and
+decision threshold (F1-maximizing on validation by default) and record it in an
+`operating_point` block. Classical models have no validation split and are
+deliberately left at `max` / `0.5`.
 
 ```powershell
 python source\model_training\naive_bayes.py --use-spans True --export-metrics True
 python source\model_training\tfidf_logistic_regression.py --use-spans True --aggregation noisy_or --export-metrics True
 python source\model_training\encoder_head.py --use-spans True --target-precision 0.6 --dropout 0.1 --weight-decay 0.01 --export-metrics True
+python source\model_training\encoder_LoRA.py --use-spans True --aggregation noisy_or --patience 3 --dropout 0.1 --export-metrics True
 python source\model_training\LLM_LoRA.py --use-spans True --aggregation noisy_or --patience 3 --dropout 0.1 --export-metrics True
 ```
