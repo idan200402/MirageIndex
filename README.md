@@ -135,6 +135,35 @@ output. By default the script loads
 `artifacts/encoder_head_spans/best_encoder_head.pt` and uses the saved operating
 point from `artifacts/encoder_head_spans/metrics.json`.
 
+## Local Chat Demo
+
+The browser demo serves a small chat UI. It sends each user question to Qwen3,
+then scores Qwen's answer with the trained `encoder_head_spans` hallucination
+detector.
+
+```powershell
+python demo\server.py
+```
+
+The server opens `http://127.0.0.1:7860/` automatically. The first message can
+take a while because it loads both Qwen3 and ModernBERT.
+
+Useful options:
+
+```powershell
+# run without opening the browser automatically
+python demo\server.py --no-open
+
+# use a different port
+python demo\server.py --port 7861
+
+# force CPU execution
+python demo\server.py --device cpu
+
+# shorten Qwen's generated answers
+python demo\server.py --max-new-tokens 120
+```
+
 ## Span Mode (`--use-spans`)
 
 By default every model predicts hallucination at the whole

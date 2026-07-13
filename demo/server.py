@@ -2,6 +2,7 @@ import argparse
 import json
 import sys
 import threading
+import traceback
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -123,23 +124,23 @@ class ModelService:
 
         messages = [{"role": "user", "content": question}]
         try:
-            input_ids = tokenizer.apply_chat_template(
+            prompt = tokenizer.apply_chat_template(
                 messages,
                 add_generation_prompt=True,
-                return_tensors="pt",
+                tokenize=False,
                 enable_thinking=False,
             )
-            inputs = {"input_ids": input_ids.to(device)}
         except TypeError:
-            input_ids = tokenizer.apply_chat_template(
+            prompt = tokenizer.apply_chat_template(
                 messages,
                 add_generation_prompt=True,
-                return_tensors="pt",
+                tokenize=False,
             )
-            inputs = {"input_ids": input_ids.to(device)}
         except Exception:
-            inputs = tokenizer(question, return_tensors="pt")
-            inputs = {key: value.to(device) for key, value in inputs.items()}
+            prompt = question
+
+        inputs = tokenizer(prompt, return_tensors="pt")
+        inputs = {key: value.to(device) for key, value in inputs.items()}
 
         generation_args = {
             **inputs,
@@ -215,7 +216,14 @@ def make_handler(service: ModelService) -> type[BaseHTTPRequestHandler]:
                 result = service.chat(question)
                 self.send_json(result)
             except Exception as exc:
-                self.send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                traceback.print_exc()
+                self.send_json(
+                    {
+                        "error": str(exc) or exc.__class__.__name__,
+                        "error_type": exc.__class__.__name__,
+                    },
+                    status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
 
         def read_json(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length", "0"))

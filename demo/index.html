@@ -223,18 +223,6 @@
         prediction.textContent = `prediction: ${meta.prediction}`;
         info.appendChild(prediction);
 
-        const threshold = document.createElement("span");
-        threshold.textContent = `threshold: ${meta.threshold.toFixed(4)}`;
-        info.appendChild(threshold);
-
-        const aggregation = document.createElement("span");
-        aggregation.textContent = `aggregation: ${meta.aggregation}`;
-        info.appendChild(aggregation);
-
-        const chunks = document.createElement("span");
-        chunks.textContent = `chunks: ${meta.chunk_count}`;
-        info.appendChild(chunks);
-
         el.appendChild(info);
       }
 
@@ -261,9 +249,16 @@
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({question})
         });
-        const payload = await response.json();
+        const raw = await response.text();
+        let payload = {};
+        try {
+          payload = raw ? JSON.parse(raw) : {};
+        } catch {
+          payload = {error: raw || response.statusText};
+        }
         if (!response.ok) {
-          throw new Error(payload.error || "Request failed");
+          const prefix = payload.error_type ? `${payload.error_type}: ` : "";
+          throw new Error(`${prefix}${payload.error || response.statusText || "Request failed"}`);
         }
         appendMessage("assistant", payload.answer, {
           score: payload.hallucination_score,
