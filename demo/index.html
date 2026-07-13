@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MirageIndex Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #17202a;
+      --muted: #667085;
+      --line: #d9dee7;
+      --accent: #176b87;
+      --risk: #b42318;
+      --ok: #067647;
+      --assistant: #eef6f8;
+      --user: #e9edf5;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      display: grid;
+      place-items: center;
+    }
+
+    main {
+      width: min(980px, 100vw);
+      height: min(760px, 100vh);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+
+    header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      font-weight: 700;
+    }
+
+    .status {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    #messages {
+      min-height: 0;
+      overflow-y: auto;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .message {
+      max-width: 82%;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      line-height: 1.45;
+      font-size: 15px;
+      white-space: pre-wrap;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      background: var(--user);
+    }
+
+    .message.assistant {
+      align-self: flex-start;
+      background: var(--assistant);
+    }
+
+    .meta {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(23, 32, 42, 0.12);
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 13px;
+    }
+
+    .score {
+      font-weight: 700;
+    }
+
+    .score.ok {
+      color: var(--ok);
+    }
+
+    .score.risk {
+      color: var(--risk);
+    }
+
+    form {
+      padding: 14px 20px 18px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 54px;
+      max-height: 160px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      padding: 12px;
+      font: inherit;
+      line-height: 1.35;
+      outline: none;
+    }
+
+    textarea:focus {
+      border-color: var(--accent);
+    }
+
+    button {
+      height: 54px;
+      border: 0;
+      padding: 0 18px;
+      background: var(--accent);
+      color: white;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: wait;
+    }
+
+    @media (max-width: 700px) {
+      main {
+        height: 100vh;
+        border: 0;
+      }
+
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .message {
+        max-width: 100%;
+      }
+
+      form {
+        grid-template-columns: 1fr;
+      }
+
+      button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>MirageIndex Chat Demo</h1>
+      <div id="status" class="status">Qwen3 answer + encoder hallucination score</div>
+    </header>
+
+    <section id="messages" aria-live="polite"></section>
+
+    <form id="chat-form">
+      <textarea id="question" placeholder="Type a question..." autocomplete="off" required></textarea>
+      <button id="send" type="submit">Send</button>
+    </form>
+  </main>
+
+  <script>
+    const form = document.getElementById("chat-form");
+    const input = document.getElementById("question");
+    const messages = document.getElementById("messages");
+    const statusEl = document.getElementById("status");
+    const send = document.getElementById("send");
+
+    function appendMessage(role, text, meta) {
+      const el = document.createElement("article");
+      el.className = `message ${role}`;
+      el.textContent = text;
+
+      if (meta) {
+        const info = document.createElement("div");
+        info.className = "meta";
+
+        const score = document.createElement("span");
+        const isRisk = meta.prediction === "yes";
+        score.className = `score ${isRisk ? "risk" : "ok"}`;
+        score.textContent = `hallucination score: ${meta.score.toFixed(4)}`;
+        info.appendChild(score);
+
+        const prediction = document.createElement("span");
+        prediction.textContent = `prediction: ${meta.prediction}`;
+        info.appendChild(prediction);
+
+        const threshold = document.createElement("span");
+        threshold.textContent = `threshold: ${meta.threshold.toFixed(4)}`;
+        info.appendChild(threshold);
+
+        const aggregation = document.createElement("span");
+        aggregation.textContent = `aggregation: ${meta.aggregation}`;
+        info.appendChild(aggregation);
+
+        const chunks = document.createElement("span");
+        chunks.textContent = `chunks: ${meta.chunk_count}`;
+        info.appendChild(chunks);
+
+        el.appendChild(info);
+      }
+
+      messages.appendChild(el);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const question = input.value.trim();
+      if (!question) {
+        return;
+      }
+
+      input.value = "";
+      input.style.height = "";
+      appendMessage("user", question);
+      send.disabled = true;
+      statusEl.textContent = "Generating with Qwen3, then scoring...";
+
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({question})
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        appendMessage("assistant", payload.answer, {
+          score: payload.hallucination_score,
+          prediction: payload.prediction,
+          threshold: payload.threshold,
+          aggregation: payload.aggregation,
+          chunk_count: payload.chunk_count
+        });
+        statusEl.textContent = "Ready";
+      } catch (error) {
+        appendMessage("assistant", `Error: ${error.message}`);
+        statusEl.textContent = "Request failed";
+      } finally {
+        send.disabled = false;
+        input.focus();
+      }
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+  </script>
+</body>
+</html>

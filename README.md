@@ -110,6 +110,31 @@ writes a PNG per view (`--output` / `--show` to override); its four modes cover
 all-model metric comparison, regular-vs-spans deltas, neural training curves, and
 span-coverage audits.
 
+## Inference
+
+After training `encoder_head.py` with `--use-spans True`, run document-level
+inference through the saved span checkpoint:
+
+```powershell
+python inference\encoder_head_spans_inference.py `
+  --query "your user query" `
+  --response "the model response to check"
+```
+
+For a JSON or JSONL file, each record must contain `user_query` and
+`chatgpt_response`:
+
+```powershell
+python inference\encoder_head_spans_inference.py `
+  --input-json data\some_records.jsonl `
+  --output-json artifacts\encoder_head_spans\inference_results.json
+```
+
+Add `--include-chunks` to include per-chunk scores and character spans in the
+output. By default the script loads
+`artifacts/encoder_head_spans/best_encoder_head.pt` and uses the saved operating
+point from `artifacts/encoder_head_spans/metrics.json`.
+
 ## Span Mode (`--use-spans`)
 
 By default every model predicts hallucination at the whole
