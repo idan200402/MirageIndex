@@ -1,0 +1,207 @@
+{
+  "artifacts": {
+    "best_encoder_lora_head_weights": "artifacts/encoder_LoRA/best_encoder_lora_head.pt"
+  },
+  "base_model": "answerdotai/ModernBERT-large",
+  "best_epoch": 12,
+  "best_learning_rate": 1e-05,
+  "best_val_loss": 0.3711807263211635,
+  "data_path": "data/general_data.json",
+  "metrics": {
+    "accuracy": 0.7991120976692564,
+    "pr_auc": 0.36840171699160545,
+    "precision": 0.53125,
+    "recall": 0.09289617486338798,
+    "roc_auc": 0.66727552247439
+  },
+  "model_name": "encoder_LoRA",
+  "seed": 42,
+  "test_examples": 901,
+  "test_loss": 0.49218208267540564,
+  "test_size": 0.2,
+  "train_examples": 2885,
+  "trained_parameters": {
+    "batch_size": 8,
+    "best_epoch": 12,
+    "best_learning_rate": 1e-05,
+    "device": "cuda",
+    "encoder_parameters_trainable": 1376256,
+    "epochs": 15,
+    "frozen_encoder": "answerdotai/ModernBERT-large",
+    "head_parameters": 1025,
+    "hidden_size": 1024,
+    "learning_rates": [
+      1e-05
+    ],
+    "lora_alpha": 16.0,
+    "lora_dropout": 0.05,
+    "lora_r": 8,
+    "lora_target_modules": [
+      "Wqkv",
+      "Wo"
+    ],
+    "max_length": 512,
+    "positive_label": "yes",
+    "replaced_modules": [
+      "layers.0.attn.Wqkv",
+      "layers.0.attn.Wo",
+      "layers.1.attn.Wqkv",
+      "layers.1.attn.Wo",
+      "layers.2.attn.Wqkv",
+      "layers.2.attn.Wo",
+      "layers.3.attn.Wqkv",
+      "layers.3.attn.Wo",
+      "layers.4.attn.Wqkv",
+      "layers.4.attn.Wo",
+      "layers.5.attn.Wqkv",
+      "layers.5.attn.Wo",
+      "layers.6.attn.Wqkv",
+      "layers.6.attn.Wo",
+      "layers.7.attn.Wqkv",
+      "layers.7.attn.Wo",
+      "layers.8.attn.Wqkv",
+      "layers.8.attn.Wo",
+      "layers.9.attn.Wqkv",
+      "layers.9.attn.Wo",
+      "layers.10.attn.Wqkv",
+      "layers.10.attn.Wo",
+      "layers.11.attn.Wqkv",
+      "layers.11.attn.Wo",
+      "layers.12.attn.Wqkv",
+      "layers.12.attn.Wo",
+      "layers.13.attn.Wqkv",
+      "layers.13.attn.Wo",
+      "layers.14.attn.Wqkv",
+      "layers.14.attn.Wo",
+      "layers.15.attn.Wqkv",
+      "layers.15.attn.Wo",
+      "layers.16.attn.Wqkv",
+      "layers.16.attn.Wo",
+      "layers.17.attn.Wqkv",
+      "layers.17.attn.Wo",
+      "layers.18.attn.Wqkv",
+      "layers.18.attn.Wo",
+      "layers.19.attn.Wqkv",
+      "layers.19.attn.Wo",
+      "layers.20.attn.Wqkv",
+      "layers.20.attn.Wo",
+      "layers.21.attn.Wqkv",
+      "layers.21.attn.Wo",
+      "layers.22.attn.Wqkv",
+      "layers.22.attn.Wo",
+      "layers.23.attn.Wqkv",
+      "layers.23.attn.Wo",
+      "layers.24.attn.Wqkv",
+      "layers.24.attn.Wo",
+      "layers.25.attn.Wqkv",
+      "layers.25.attn.Wo",
+      "layers.26.attn.Wqkv",
+      "layers.26.attn.Wo",
+      "layers.27.attn.Wqkv",
+      "layers.27.attn.Wo"
+    ],
+    "text_fields": [
+      "user_query",
+      "chatgpt_response"
+    ],
+    "torch_dtype": "torch.float16",
+    "total_trainable_parameters": 1377281,
+    "trainable_attention_adapters": "LoRA adapters on ModernBERT attention projection modules",
+    "trainable_head": "torch.nn.Linear(hidden_size, 1)",
+    "weight_decay": 0.0
+  },
+  "training_history": [
+    {
+      "epoch": 1,
+      "learning_rate": 1e-05,
+      "train_loss": 0.5407542266455225,
+      "val_loss": 0.4167388533752272
+    },
+    {
+      "epoch": 2,
+      "learning_rate": 1e-05,
+      "train_loss": 0.4695174391286212,
+      "val_loss": 0.41127270418794076
+    },
+    {
+      "epoch": 3,
+      "learning_rate": 1e-05,
+      "train_loss": 0.46485905004229455,
+      "val_loss": 0.4073221070095173
+    },
+    {
+      "epoch": 4,
+      "learning_rate": 1e-05,
+      "train_loss": 0.46006594386009864,
+      "val_loss": 0.4018369789097081
+    },
+    {
+      "epoch": 5,
+      "learning_rate": 1e-05,
+      "train_loss": 0.4552191693510092,
+      "val_loss": 0.4023831965357851
+    },
+    {
+      "epoch": 6,
+      "learning_rate": 1e-05,
+      "train_loss": 0.44974386811876216,
+      "val_loss": 0.4020035541338663
+    },
+    {
+      "epoch": 7,
+      "learning_rate": 1e-05,
+      "train_loss": 0.44404229483530056,
+      "val_loss": 0.39752540806626147
+    },
+    {
+      "epoch": 8,
+      "learning_rate": 1e-05,
+      "train_loss": 0.4397968786118142,
+      "val_loss": 0.39126943582965995
+    },
+    {
+      "epoch": 9,
+      "learning_rate": 1e-05,
+      "train_loss": 0.43322231163185226,
+      "val_loss": 0.38813119903516835
+    },
+    {
+      "epoch": 10,
+      "learning_rate": 1e-05,
+      "train_loss": 0.42655622794371956,
+      "val_loss": 0.3784769577556774
+    },
+    {
+      "epoch": 11,
+      "learning_rate": 1e-05,
+      "train_loss": 0.41682929521623474,
+      "val_loss": 0.3735159747974221
+    },
+    {
+      "epoch": 12,
+      "learning_rate": 1e-05,
+      "train_loss": 0.40848419887870807,
+      "val_loss": 0.3711807263211635
+    },
+    {
+      "epoch": 13,
+      "learning_rate": 1e-05,
+      "train_loss": 0.40136932783358226,
+      "val_loss": 0.37241182958864805
+    },
+    {
+      "epoch": 14,
+      "learning_rate": 1e-05,
+      "train_loss": 0.392381989945572,
+      "val_loss": 0.3735670987180797
+    },
+    {
+      "epoch": 15,
+      "learning_rate": 1e-05,
+      "train_loss": 0.3894601040944276,
+      "val_loss": 0.3815198740747534
+    }
+  ],
+  "val_examples": 721,
+  "val_size": 0.2
+}

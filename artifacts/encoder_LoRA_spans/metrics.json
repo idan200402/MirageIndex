@@ -1,0 +1,194 @@
+{
+  "artifacts": {
+    "best_encoder_lora_head_weights": "artifacts/encoder_LoRA_spans/best_encoder_lora_head.pt"
+  },
+  "base_model": "answerdotai/ModernBERT-large",
+  "best_epoch": 4,
+  "best_learning_rate": 1e-05,
+  "best_val_loss": 0.6548199336266493,
+  "data_path": "data/general_data.json",
+  "metrics": {
+    "accuracy": 0.7968923418423973,
+    "pr_auc": 0.39518275966232186,
+    "precision": 0.5,
+    "recall": 0.273224043715847,
+    "roc_auc": 0.670913435925537
+  },
+  "model_name": "encoder_LoRA_spans",
+  "operating_point": {
+    "aggregation_pr_auc": {
+      "max": 0.344460785996729,
+      "mean_topk": 0.35989998348184243,
+      "noisy_or": 0.344460785996729
+    },
+    "objective": "f1",
+    "requested_aggregation": "auto",
+    "selected_aggregation": "mean_topk",
+    "selected_threshold": 0.7175186276435852,
+    "target_precision": null,
+    "tuned_threshold": true
+  },
+  "seed": 42,
+  "span_config": {
+    "aggregation": "auto",
+    "chunk_stride": 20,
+    "chunk_window": 40,
+    "overlap_threshold": 0.25,
+    "response_threshold": 0.5,
+    "top_k": 3
+  },
+  "span_coverage": {
+    "negative_chunks": 9362,
+    "non_verbatim_span_rate": 0.1256198347107438,
+    "normalized_spans": 6,
+    "positive_chunks": 1047,
+    "positive_docs_all_negative": 0,
+    "unresolved_spans": 70,
+    "verbatim_spans": 529,
+    "yes_records_fallback_positive": 50,
+    "yes_records_meta_positive": 51,
+    "yes_records_resolved": 475,
+    "yes_records_total": 526,
+    "yes_records_zero_spans": 0
+  },
+  "test_examples": 901,
+  "test_loss": 0.6039464590591354,
+  "test_size": 0.2,
+  "train_examples": 2885,
+  "trained_parameters": {
+    "batch_size": 8,
+    "best_epoch": 4,
+    "best_learning_rate": 1e-05,
+    "device": "cuda",
+    "encoder_parameters_trainable": 1376256,
+    "epochs": 15,
+    "frozen_encoder": "answerdotai/ModernBERT-large",
+    "head_parameters": 1025,
+    "hidden_size": 1024,
+    "learning_rates": [
+      1e-05
+    ],
+    "lora_alpha": 16.0,
+    "lora_dropout": 0.05,
+    "lora_r": 8,
+    "lora_target_modules": [
+      "Wqkv",
+      "Wo"
+    ],
+    "max_length": 512,
+    "positive_label": "yes",
+    "replaced_modules": [
+      "layers.0.attn.Wqkv",
+      "layers.0.attn.Wo",
+      "layers.1.attn.Wqkv",
+      "layers.1.attn.Wo",
+      "layers.2.attn.Wqkv",
+      "layers.2.attn.Wo",
+      "layers.3.attn.Wqkv",
+      "layers.3.attn.Wo",
+      "layers.4.attn.Wqkv",
+      "layers.4.attn.Wo",
+      "layers.5.attn.Wqkv",
+      "layers.5.attn.Wo",
+      "layers.6.attn.Wqkv",
+      "layers.6.attn.Wo",
+      "layers.7.attn.Wqkv",
+      "layers.7.attn.Wo",
+      "layers.8.attn.Wqkv",
+      "layers.8.attn.Wo",
+      "layers.9.attn.Wqkv",
+      "layers.9.attn.Wo",
+      "layers.10.attn.Wqkv",
+      "layers.10.attn.Wo",
+      "layers.11.attn.Wqkv",
+      "layers.11.attn.Wo",
+      "layers.12.attn.Wqkv",
+      "layers.12.attn.Wo",
+      "layers.13.attn.Wqkv",
+      "layers.13.attn.Wo",
+      "layers.14.attn.Wqkv",
+      "layers.14.attn.Wo",
+      "layers.15.attn.Wqkv",
+      "layers.15.attn.Wo",
+      "layers.16.attn.Wqkv",
+      "layers.16.attn.Wo",
+      "layers.17.attn.Wqkv",
+      "layers.17.attn.Wo",
+      "layers.18.attn.Wqkv",
+      "layers.18.attn.Wo",
+      "layers.19.attn.Wqkv",
+      "layers.19.attn.Wo",
+      "layers.20.attn.Wqkv",
+      "layers.20.attn.Wo",
+      "layers.21.attn.Wqkv",
+      "layers.21.attn.Wo",
+      "layers.22.attn.Wqkv",
+      "layers.22.attn.Wo",
+      "layers.23.attn.Wqkv",
+      "layers.23.attn.Wo",
+      "layers.24.attn.Wqkv",
+      "layers.24.attn.Wo",
+      "layers.25.attn.Wqkv",
+      "layers.25.attn.Wo",
+      "layers.26.attn.Wqkv",
+      "layers.26.attn.Wo",
+      "layers.27.attn.Wqkv",
+      "layers.27.attn.Wo"
+    ],
+    "text_fields": [
+      "user_query",
+      "chatgpt_response"
+    ],
+    "torch_dtype": "torch.float16",
+    "total_trainable_parameters": 1377281,
+    "trainable_attention_adapters": "LoRA adapters on ModernBERT attention projection modules",
+    "trainable_head": "torch.nn.Linear(hidden_size, 1)",
+    "weight_decay": 0.0
+  },
+  "training_history": [
+    {
+      "epoch": 1,
+      "learning_rate": 1e-05,
+      "train_loss": 1.2357625481786663,
+      "val_loss": 0.6677418833834294
+    },
+    {
+      "epoch": 2,
+      "learning_rate": 1e-05,
+      "train_loss": 1.1511583096848887,
+      "val_loss": 0.7338574386254848
+    },
+    {
+      "epoch": 3,
+      "learning_rate": 1e-05,
+      "train_loss": 1.0792467176129716,
+      "val_loss": 0.7249750121348376
+    },
+    {
+      "epoch": 4,
+      "learning_rate": 1e-05,
+      "train_loss": 1.0411294678215197,
+      "val_loss": 0.6548199336266493
+    },
+    {
+      "epoch": 5,
+      "learning_rate": 1e-05,
+      "train_loss": 1.0041121963534327,
+      "val_loss": 0.690669057234018
+    },
+    {
+      "epoch": 6,
+      "learning_rate": 1e-05,
+      "train_loss": 0.9668343164744667,
+      "val_loss": 0.6610125145574957
+    },
+    {
+      "epoch": 7,
+      "learning_rate": 1e-05,
+      "train_loss": 0.9227782062150431,
+      "val_loss": 0.682785704982296
+    }
+  ],
+  "val_examples": 721,
+  "val_size": 0.2
+}
